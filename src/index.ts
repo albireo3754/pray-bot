@@ -14,8 +14,7 @@ export * from './presence/index.ts';
 
 // -- Phase B modules --
 export * from './cron/index.ts';
-export * from './monitor/index.ts';
-export * from './codex-monitor/index.ts';
+export * from './usage-monitor/index.ts';
 export * from './codex-server/index.ts';
 export * from './discord/index.ts';
 export * from './auto-thread/index.ts';

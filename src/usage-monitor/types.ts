@@ -70,3 +70,29 @@ export interface MonitorStatus {
 
 // EmbedData type for formatter compatibility
 export type EmbedData = Record<string, unknown>;
+
+export interface TokenUsageSession {
+  sessionId: string;
+  projectName: string;
+  slug: string;
+  state: SessionSnapshot['state'];
+  model: string | null;
+  tokens: { input: number; output: number; cached: number };
+  estimatedCostUsd: number;
+  lastActivity: Date;
+  lastUserMessage: string | null;
+  currentTools: string[];
+}
+
+export interface TokenUsageReport {
+  timestamp: Date;
+  sessions: TokenUsageSession[];
+  totals: {
+    input: number;
+    output: number;
+    cached: number;
+    estimatedCostUsd: number;
+  };
+  activeCount: number;
+  totalCount: number;
+}

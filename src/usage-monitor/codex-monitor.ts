@@ -1,5 +1,6 @@
 import { readdir, stat } from 'node:fs/promises';
-import type { MonitorStatus, SessionSnapshot } from '../monitor/types.ts';
+import type { MonitorStatus, SessionSnapshot, TokenUsageReport, TokenUsageSession } from './types.ts';
+import type { SessionMonitorProvider } from './index.ts';
 
 const FIVE_MINUTES = 5 * 60 * 1000;
 const ONE_HOUR = 60 * 60 * 1000;
@@ -11,6 +12,11 @@ const DEFAULT_SESSIONS_ROOT = process.env.HOME
 const FIRST_LINE_READ_LIMIT = 2_000_000;
 const TAIL_READ_BYTES = 512_000;
 
+// Rough per-token pricing (Codex/GPT-5.3 as reference)
+const COST_PER_INPUT_TOKEN = 2 / 1_000_000;    // $2/MTok
+const COST_PER_OUTPUT_TOKEN = 8 / 1_000_000;    // $8/MTok
+const COST_PER_CACHED_TOKEN = 0.5 / 1_000_000;  // $0.5/MTok (cache read)
+
 type JsonObject = Record<string, unknown>;
 
 type CodexEntry = {
@@ -19,7 +25,7 @@ type CodexEntry = {
   payload?: JsonObject;
 };
 
-export interface CodexSessionMonitorOptions {
+export interface CodexUsageMonitorOptions {
   pollIntervalMs?: number;
   scanDays?: number;
   sessionsRoot?: string;
@@ -240,7 +246,15 @@ function formatDateDir(date: Date): string {
   return `${year}/${month}/${day}`;
 }
 
-export class CodexSessionMonitor {
+function estimateCost(tokens: { input: number; output: number; cached: number }): number {
+  return (
+    (tokens.input - tokens.cached) * COST_PER_INPUT_TOKEN +
+    tokens.output * COST_PER_OUTPUT_TOKEN +
+    tokens.cached * COST_PER_CACHED_TOKEN
+  );
+}
+
+export class CodexUsageMonitor implements SessionMonitorProvider {
   private sessions = new Map<string, SessionSnapshot>();
   private timer: Timer | null = null;
   private lastRefresh = new Date();
@@ -249,7 +263,7 @@ export class CodexSessionMonitor {
   private readonly scanDays: number;
   private readonly sessionsRoot: string;
 
-  constructor(options: CodexSessionMonitorOptions = {}) {
+  constructor(options: CodexUsageMonitorOptions = {}) {
     this.pollIntervalMs = options.pollIntervalMs ?? 15_000;
     this.scanDays = Math.max(1, options.scanDays ?? DEFAULT_SCAN_DAYS);
     this.sessionsRoot = options.sessionsRoot ?? DEFAULT_SESSIONS_ROOT;
@@ -333,6 +347,45 @@ export class CodexSessionMonitor {
       activeCount: sessions.filter((session) => session.state === 'active').length,
       totalCount: sessions.length,
       lastRefresh: this.lastRefresh,
+    };
+  }
+
+  getTokenUsageReport(): TokenUsageReport {
+    const allSessions = this.getActive();
+
+    const sessions: TokenUsageSession[] = allSessions.map((s) => ({
+      sessionId: s.sessionId,
+      projectName: s.projectName,
+      slug: s.slug,
+      state: s.state,
+      model: s.model,
+      tokens: { ...s.tokens },
+      estimatedCostUsd: estimateCost(s.tokens),
+      lastActivity: s.lastActivity,
+      lastUserMessage: s.lastUserMessage,
+      currentTools: s.currentTools,
+    }));
+
+    const totals = {
+      input: 0,
+      output: 0,
+      cached: 0,
+      estimatedCostUsd: 0,
+    };
+
+    for (const s of sessions) {
+      totals.input += s.tokens.input;
+      totals.output += s.tokens.output;
+      totals.cached += s.tokens.cached;
+      totals.estimatedCostUsd += s.estimatedCostUsd;
+    }
+
+    return {
+      timestamp: new Date(),
+      sessions,
+      totals,
+      activeCount: allSessions.filter((s) => s.state === 'active').length,
+      totalCount: allSessions.length,
     };
   }
 

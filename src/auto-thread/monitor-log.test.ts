@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { SessionSnapshot } from '../monitor/types.ts';
+import type { SessionSnapshot } from '../usage-monitor/types.ts';
 import { buildMonitorLogMessage } from './monitor-log.ts';
 
 const tempDirs: string[] = [];

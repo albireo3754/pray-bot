@@ -1,19 +1,26 @@
 import { watch, type FSWatcher } from 'node:fs';
-import type { SessionSnapshot, MonitorStatus, ClaudeProcess } from './types.ts';
-import { getClaudeProcesses, enrichProcesses, discoverProjects, encodeProjectKey, CLAUDE_HOMES } from './discovery.ts';
-import { tailJsonl, extractSessionInfo, determineActivityPhase } from './parser.ts';
+import type { SessionSnapshot, MonitorStatus, ClaudeProcess, TokenUsageReport, TokenUsageSession } from './types.ts';
+import { getClaudeProcesses, enrichProcesses, discoverProjects, encodeProjectKey, CLAUDE_HOMES } from './claude-discovery.ts';
+import { tailJsonl, extractSessionInfo, determineActivityPhase } from './claude-parser.ts';
+import type { SessionMonitorProvider } from './index.ts';
 
-export { type SessionSnapshot, type MonitorStatus } from './types.ts';
-export {
-  formatSessionsText,
-  formatSessionsEmbed,
-  formatSessionDetailText,
-  formatSessionDetailEmbed,
-} from './formatter.ts';
 const FIVE_MINUTES = 5 * 60 * 1000;
 const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
 
-export class ClaudeSessionMonitor {
+// Rough per-token pricing (Claude Opus 4.6 as reference)
+const COST_PER_INPUT_TOKEN = 15 / 1_000_000;   // $15/MTok
+const COST_PER_OUTPUT_TOKEN = 75 / 1_000_000;   // $75/MTok
+const COST_PER_CACHED_TOKEN = 1.5 / 1_000_000;  // $1.5/MTok (cache read)
+
+function estimateCost(tokens: { input: number; output: number; cached: number }): number {
+  return (
+    (tokens.input - tokens.cached) * COST_PER_INPUT_TOKEN +
+    tokens.output * COST_PER_OUTPUT_TOKEN +
+    tokens.cached * COST_PER_CACHED_TOKEN
+  );
+}
+
+export class ClaudeUsageMonitor implements SessionMonitorProvider {
   private sessions = new Map<string, SessionSnapshot>();
   private timer: Timer | null = null;
   private watchDebounceTimer: Timer | null = null;
@@ -360,6 +367,45 @@ export class ClaudeSessionMonitor {
       activeCount: sessions.filter((s) => s.state === 'active').length,
       totalCount: sessions.length,
       lastRefresh: this.lastRefresh,
+    };
+  }
+
+  getTokenUsageReport(): TokenUsageReport {
+    const allSessions = this.getActive();
+
+    const sessions: TokenUsageSession[] = allSessions.map((s) => ({
+      sessionId: s.sessionId,
+      projectName: s.projectName,
+      slug: s.slug,
+      state: s.state,
+      model: s.model,
+      tokens: { ...s.tokens },
+      estimatedCostUsd: estimateCost(s.tokens),
+      lastActivity: s.lastActivity,
+      lastUserMessage: s.lastUserMessage,
+      currentTools: s.currentTools,
+    }));
+
+    const totals = {
+      input: 0,
+      output: 0,
+      cached: 0,
+      estimatedCostUsd: 0,
+    };
+
+    for (const s of sessions) {
+      totals.input += s.tokens.input;
+      totals.output += s.tokens.output;
+      totals.cached += s.tokens.cached;
+      totals.estimatedCostUsd += s.estimatedCostUsd;
+    }
+
+    return {
+      timestamp: new Date(),
+      sessions,
+      totals,
+      activeCount: allSessions.filter((s) => s.state === 'active').length,
+      totalCount: allSessions.length,
     };
   }
 

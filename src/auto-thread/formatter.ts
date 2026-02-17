@@ -1,4 +1,4 @@
-import type { SessionSnapshot, ActivityPhase } from '../monitor/types.ts';
+import type { SessionSnapshot, ActivityPhase } from '../usage-monitor/types.ts';
 import type { EmbedData } from '../discord/types.ts';
 import { extractOriginalProjectFromWorktree } from './resolver.ts';
 

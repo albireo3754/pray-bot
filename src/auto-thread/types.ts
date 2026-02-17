@@ -1,4 +1,4 @@
-import type { SessionSnapshot } from '../monitor/types.ts';
+import type { SessionSnapshot } from '../usage-monitor/types.ts';
 
 export interface AutoThreadConfig {
   /** 활성화 여부 (기본 true) */

@@ -59,7 +59,7 @@ const DEFAULT_INFO: MockSessionInfo = {
   lastAssistantStopReason: null,
 };
 
-mock.module('./discovery', () => ({
+mock.module('../claude-discovery', () => ({
   CLAUDE_HOMES: ['/mock-home'],
   encodeProjectKey(path: string) {
     return path.replace(/\//g, '-');
@@ -78,7 +78,7 @@ mock.module('./discovery', () => ({
   },
 }));
 
-mock.module('./parser', () => ({
+mock.module('../claude-parser', () => ({
   async tailJsonl(path: string) {
     tailCallCount += 1;
     return [{ __path: path }];
@@ -92,7 +92,7 @@ mock.module('./parser', () => ({
   },
 }));
 
-const { ClaudeSessionMonitor } = await import('./index');
+const { ClaudeUsageMonitor } = await import('../claude-monitor');
 
 function buildPath(projectKey: string, fileName: string): string {
   return `/mock-home/projects/${projectKey}/${fileName}`;
@@ -105,7 +105,7 @@ beforeEach(() => {
   tailCallCount = 0;
 });
 
-describe('ClaudeSessionMonitor.refresh', () => {
+describe('ClaudeUsageMonitor.refresh', () => {
   test('builds active session snapshot from process + jsonl metadata', async () => {
     const now = Date.now();
     const projectKey = '-Users-user-work-js-my-project';
@@ -151,7 +151,7 @@ describe('ClaudeSessionMonitor.refresh', () => {
       lastAssistantStopReason: null,
     });
 
-    const monitor = new ClaudeSessionMonitor();
+    const monitor = new ClaudeUsageMonitor();
     await monitor.refresh();
 
     const status = monitor.getStatus();
@@ -180,7 +180,7 @@ describe('ClaudeSessionMonitor.refresh', () => {
       },
     ];
 
-    const monitor = new ClaudeSessionMonitor();
+    const monitor = new ClaudeUsageMonitor();
     await monitor.refresh();
 
     const status = monitor.getStatus();
@@ -233,7 +233,7 @@ describe('ClaudeSessionMonitor.refresh', () => {
       lastAssistantStopReason: null,
     });
 
-    const monitor = new ClaudeSessionMonitor();
+    const monitor = new ClaudeUsageMonitor();
     await monitor.refresh();
     await monitor.refresh();
 

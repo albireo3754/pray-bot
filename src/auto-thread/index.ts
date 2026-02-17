@@ -1,4 +1,5 @@
-import type { SessionSnapshot, ActivityPhase } from '../monitor/types.ts';
+import type { SessionSnapshot, ActivityPhase } from '../usage-monitor/types.ts';
+import type { SessionMonitorProvider } from '../usage-monitor/index.ts';
 import type { ChannelRegistry } from '../discord/channel-registry.ts';
 import type { DiscordClient } from '../discord/client.ts';
 import type { ChannelMapping } from '../discord/types.ts';
@@ -23,23 +24,8 @@ type DiscordThreadRoute = {
 
 type AutoThreadProvider = 'claude' | 'codex';
 
-type AutoThreadSessionMonitor = {
-  onRefresh: (cb: (sessions: SessionSnapshot[]) => Promise<void>) => void;
-};
-
-type AutoThreadMonitorGroup = {
-  claude?: AutoThreadSessionMonitor;
-  codex?: AutoThreadSessionMonitor;
-};
-
-type AutoThreadMonitorInput = AutoThreadSessionMonitor | AutoThreadMonitorGroup;
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function isMonitorGroup(input: AutoThreadMonitorInput): input is AutoThreadMonitorGroup {
-  return !('onRefresh' in input);
 }
 
 function snapshotProvider(snapshot: SessionSnapshot, fallback: AutoThreadProvider = 'claude'): AutoThreadProvider {
@@ -92,11 +78,9 @@ export class AutoThreadDiscovery {
   private store: AutoThreadStore;
   private monitorStateStore: AutoThreadMonitorStateStore;
   private lastWatchAtBySession = new Map<string, number>();
-  private monitorSessionsByProvider = new Map<AutoThreadProvider, SessionSnapshot[]>();
-
   constructor(
     private config: AutoThreadConfig,
-    private monitor: AutoThreadMonitorInput,
+    private monitor: SessionMonitorProvider,
     private channelRegistry: ChannelRegistry,
     private discordClient: DiscordClient,
     private getThreadRoutes: () => Map<string, DiscordThreadRoute>,
@@ -116,57 +100,8 @@ export class AutoThreadDiscovery {
       await this.loadMonitorState();
     }
 
-    this.bindMonitors();
+    this.monitor.onRefresh((sessions) => this.onMonitorRefresh(sessions));
     console.log('[AutoThread] initialized');
-  }
-
-  private bindMonitors(): void {
-    if (isMonitorGroup(this.monitor)) {
-      if (this.monitor.claude) {
-        this.registerMonitor('claude', this.monitor.claude);
-      }
-      if (this.monitor.codex) {
-        this.registerMonitor('codex', this.monitor.codex);
-      }
-      return;
-    }
-
-    this.registerMonitor('claude', this.monitor);
-  }
-
-  private registerMonitor(provider: AutoThreadProvider, monitor: AutoThreadSessionMonitor): void {
-    monitor.onRefresh((sessions: SessionSnapshot[]) =>
-      (async () => {
-        const normalized = sessions.map((snapshot) => this.ensureSnapshotProvider(snapshot, provider));
-        this.monitorSessionsByProvider.set(provider, normalized);
-        await this.onMonitorRefresh(this.mergeMonitorSessions());
-      })(),
-    );
-  }
-
-  private ensureSnapshotProvider(
-    snapshot: SessionSnapshot,
-    fallbackProvider: AutoThreadProvider,
-  ): SessionSnapshot {
-    const provider = snapshotProvider(snapshot, fallbackProvider);
-    if (snapshot.provider === provider) return snapshot;
-    return { ...snapshot, provider };
-  }
-
-  private mergeMonitorSessions(): SessionSnapshot[] {
-    const merged = new Map<string, SessionSnapshot>();
-
-    for (const sessions of this.monitorSessionsByProvider.values()) {
-      for (const snapshot of sessions) {
-        const key = buildSnapshotKey(snapshot);
-        const existing = merged.get(key);
-        if (!existing || snapshot.lastActivity.getTime() > existing.lastActivity.getTime()) {
-          merged.set(key, snapshot);
-        }
-      }
-    }
-
-    return Array.from(merged.values());
   }
 
   async onMonitorRefresh(sessions: SessionSnapshot[]): Promise<void> {

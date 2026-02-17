@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { determineActivityPhase } from '../activity-phase.ts';
-import type { SessionInfo } from '../parser.ts';
+import type { SessionInfo } from '../claude-parser.ts';
 
 function makeInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
   return {
