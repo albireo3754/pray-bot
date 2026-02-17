@@ -21,6 +21,7 @@ export * from './auto-thread/index.ts';
 export * from './server/util.ts';
 
 // -- Phase C modules --
+export * from './tools/index.ts';
 export { GitWatcher, type GitWatcherOptions } from './git-watcher.ts';
 export { WorktreeWatcher, type WorktreeWatcherOptions } from './worktree-watcher.ts';
 export * from './plugin/index.ts';
