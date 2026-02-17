@@ -1,5 +1,4 @@
-import type { SessionSnapshot } from '../monitor/types.ts';
-import type { ClaudeSessionMonitor } from '../monitor/index.ts';
+import type { SessionSnapshot, ActivityPhase } from '../monitor/types.ts';
 import type { ChannelRegistry } from '../discord/channel-registry.ts';
 import type { DiscordClient } from '../discord/client.ts';
 import type { ChannelMapping } from '../discord/types.ts';
@@ -7,7 +6,7 @@ import { resolveMappingForSession, extractOriginalProjectFromWorktree } from './
 import { AutoThreadStore } from './store.ts';
 import { AutoThreadMonitorStateStore } from './monitor-state-store.ts';
 import { buildMonitorLogMessage } from './monitor-log.ts';
-import { formatInitialEmbed, formatStateChangeMessage } from './formatter.ts';
+import { formatInitialEmbed, formatStateChangeMessage, formatActivityPhaseChangeMessage } from './formatter.ts';
 import type { AutoThreadConfig, DiscoveredThread } from './types.ts';
 
 type DiscordThreadRoute = {
@@ -22,12 +21,50 @@ type DiscordThreadRoute = {
   autoDiscovered?: boolean;
 };
 
+type AutoThreadProvider = 'claude' | 'codex';
+
+type AutoThreadSessionMonitor = {
+  onRefresh: (cb: (sessions: SessionSnapshot[]) => Promise<void>) => void;
+};
+
+type AutoThreadMonitorGroup = {
+  claude?: AutoThreadSessionMonitor;
+  codex?: AutoThreadSessionMonitor;
+};
+
+type AutoThreadMonitorInput = AutoThreadSessionMonitor | AutoThreadMonitorGroup;
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isMonitorGroup(input: AutoThreadMonitorInput): input is AutoThreadMonitorGroup {
+  return !('onRefresh' in input);
+}
+
+function snapshotProvider(snapshot: SessionSnapshot, fallback: AutoThreadProvider = 'claude'): AutoThreadProvider {
+  return snapshot.provider === 'codex' ? 'codex' : fallback;
+}
+
+function discoveredProvider(item: DiscoveredThread): AutoThreadProvider {
+  return item.provider === 'codex' ? 'codex' : 'claude';
+}
+
+function buildSessionKey(provider: AutoThreadProvider, sessionId: string): string {
+  return `${provider}:${sessionId}`;
+}
+
+function buildSnapshotKey(snapshot: SessionSnapshot, fallback: AutoThreadProvider = 'claude'): string {
+  return buildSessionKey(snapshotProvider(snapshot, fallback), snapshot.sessionId);
+}
+
+function buildDiscoveredKey(item: DiscoveredThread): string {
+  return buildSessionKey(discoveredProvider(item), item.sessionId);
+}
+
 function buildThreadName(snapshot: SessionSnapshot): string {
-  const model = (snapshot.model ?? 'claude').toLowerCase().replace(/[^a-z0-9-]/g, '-') || 'claude';
+  const provider = snapshotProvider(snapshot);
+  const model = (snapshot.model ?? provider).toLowerCase().replace(/[^a-z0-9-]/g, '-') || provider;
 
   const worktreeInfo = extractOriginalProjectFromWorktree(snapshot.projectPath);
   if (worktreeInfo) {
@@ -44,19 +81,22 @@ function buildThreadName(snapshot: SessionSnapshot): string {
 }
 
 export class AutoThreadDiscovery {
-  /** sessionId -> DiscoveredThread */
+  /** provider:sessionId -> DiscoveredThread */
   private discoveredMap = new Map<string, DiscoveredThread>();
-  /** 이전 refresh session 집합 */
+  /** provider:sessionId set from previous refresh */
   private knownSessionIds = new Set<string>();
-  /** session 상태 추적 (변화 알림용) */
+  /** provider:sessionId -> state */
   private knownStates = new Map<string, SessionSnapshot['state']>();
+  /** provider:sessionId -> activityPhase */
+  private previousActivityPhases = new Map<string, ActivityPhase | null>();
   private store: AutoThreadStore;
   private monitorStateStore: AutoThreadMonitorStateStore;
   private lastWatchAtBySession = new Map<string, number>();
+  private monitorSessionsByProvider = new Map<AutoThreadProvider, SessionSnapshot[]>();
 
   constructor(
     private config: AutoThreadConfig,
-    private monitor: ClaudeSessionMonitor,
+    private monitor: AutoThreadMonitorInput,
     private channelRegistry: ChannelRegistry,
     private discordClient: DiscordClient,
     private getThreadRoutes: () => Map<string, DiscordThreadRoute>,
@@ -75,45 +115,109 @@ export class AutoThreadDiscovery {
     if (this.config.monitorLogEnabled) {
       await this.loadMonitorState();
     }
-    this.monitor.onRefresh((sessions: SessionSnapshot[]) => this.onMonitorRefresh(sessions));
+
+    this.bindMonitors();
     console.log('[AutoThread] initialized');
+  }
+
+  private bindMonitors(): void {
+    if (isMonitorGroup(this.monitor)) {
+      if (this.monitor.claude) {
+        this.registerMonitor('claude', this.monitor.claude);
+      }
+      if (this.monitor.codex) {
+        this.registerMonitor('codex', this.monitor.codex);
+      }
+      return;
+    }
+
+    this.registerMonitor('claude', this.monitor);
+  }
+
+  private registerMonitor(provider: AutoThreadProvider, monitor: AutoThreadSessionMonitor): void {
+    monitor.onRefresh((sessions: SessionSnapshot[]) =>
+      (async () => {
+        const normalized = sessions.map((snapshot) => this.ensureSnapshotProvider(snapshot, provider));
+        this.monitorSessionsByProvider.set(provider, normalized);
+        await this.onMonitorRefresh(this.mergeMonitorSessions());
+      })(),
+    );
+  }
+
+  private ensureSnapshotProvider(
+    snapshot: SessionSnapshot,
+    fallbackProvider: AutoThreadProvider,
+  ): SessionSnapshot {
+    const provider = snapshotProvider(snapshot, fallbackProvider);
+    if (snapshot.provider === provider) return snapshot;
+    return { ...snapshot, provider };
+  }
+
+  private mergeMonitorSessions(): SessionSnapshot[] {
+    const merged = new Map<string, SessionSnapshot>();
+
+    for (const sessions of this.monitorSessionsByProvider.values()) {
+      for (const snapshot of sessions) {
+        const key = buildSnapshotKey(snapshot);
+        const existing = merged.get(key);
+        if (!existing || snapshot.lastActivity.getTime() > existing.lastActivity.getTime()) {
+          merged.set(key, snapshot);
+        }
+      }
+    }
+
+    return Array.from(merged.values());
   }
 
   async onMonitorRefresh(sessions: SessionSnapshot[]): Promise<void> {
     if (!this.config.enabled) return;
 
-    const currentIds = new Set(sessions.map((s) => s.sessionId));
+    const currentIds = new Set(sessions.map((snapshot) => buildSnapshotKey(snapshot)));
 
-    // 기존 세션 상태 변화 알림
+    // 기존 세션 상태 변화 알림 + activityPhase 변화 알림
     for (const snapshot of sessions) {
       if (this.isExcludedSnapshot(snapshot)) continue;
-      const previousState = this.knownStates.get(snapshot.sessionId);
-      if (!previousState || previousState === snapshot.state) continue;
-
-      const discovered = this.discoveredMap.get(snapshot.sessionId);
+      const key = buildSnapshotKey(snapshot);
+      const discovered = this.discoveredMap.get(key);
       if (!discovered) continue;
 
-      const message = formatStateChangeMessage(previousState, snapshot);
-      if (message) {
-        this.discordClient.sendMessage(discovered.threadId, message).catch((error) => {
-          console.error(`[AutoThread] state change notify failed: ${snapshot.sessionId}`, error);
-        });
+      // State change notification
+      const previousState = this.knownStates.get(key);
+      if (previousState && previousState !== snapshot.state) {
+        const message = formatStateChangeMessage(previousState, snapshot);
+        if (message) {
+          this.discordClient.sendMessage(discovered.threadId, message).catch((error) => {
+            console.error(`[AutoThread] state change notify failed: ${snapshot.sessionId}`, error);
+          });
+        }
+      }
+
+      // Activity phase change notification
+      const previousPhase = this.previousActivityPhases.get(key) ?? null;
+      if (previousPhase !== snapshot.activityPhase) {
+        const phaseMessage = formatActivityPhaseChangeMessage(previousPhase, snapshot.activityPhase, snapshot);
+        if (phaseMessage) {
+          this.discordClient.sendMessage(discovered.threadId, phaseMessage).catch((error) => {
+            console.error(`[AutoThread] phase change notify failed: ${snapshot.sessionId}`, error);
+          });
+        }
       }
     }
 
     // 새 세션 감지: current - known - alreadyMapped
-    const newSessions = sessions.filter((snapshot) =>
-      !this.knownSessionIds.has(snapshot.sessionId)
-      && this.config.targetStates.includes(snapshot.state)
-      && !this.isExcludedSnapshot(snapshot)
-      && !this.isAlreadyMapped(snapshot.sessionId),
-    );
+    const newSessions = sessions.filter((snapshot) => {
+      const provider = snapshotProvider(snapshot);
+      return !this.knownSessionIds.has(buildSnapshotKey(snapshot))
+        && this.config.targetStates.includes(snapshot.state)
+        && !this.isExcludedSnapshot(snapshot)
+        && !this.isAlreadyMapped(snapshot.sessionId, provider);
+    });
 
     for (const snapshot of newSessions) {
       try {
         const created = await this.createThreadForSession(snapshot);
         if (created) {
-          this.discoveredMap.set(snapshot.sessionId, created);
+          this.discoveredMap.set(buildDiscoveredKey(created), created);
           await this.save();
         }
       } catch (error) {
@@ -127,8 +231,11 @@ export class AutoThreadDiscovery {
 
     this.knownSessionIds = currentIds;
     this.knownStates.clear();
+    this.previousActivityPhases.clear();
     for (const snapshot of sessions) {
-      this.knownStates.set(snapshot.sessionId, snapshot.state);
+      const key = buildSnapshotKey(snapshot);
+      this.knownStates.set(key, snapshot.state);
+      this.previousActivityPhases.set(key, snapshot.activityPhase);
     }
   }
 
@@ -142,11 +249,11 @@ export class AutoThreadDiscovery {
     );
   }
 
-  isAlreadyMapped(sessionId: string): boolean {
-    if (this.discoveredMap.has(sessionId)) return true;
+  isAlreadyMapped(sessionId: string, provider: AutoThreadProvider = 'claude'): boolean {
+    if (this.discoveredMap.has(buildSessionKey(provider, sessionId))) return true;
 
     for (const route of this.getThreadRoutes().values()) {
-      if (route.provider === 'claude' && route.providerSessionId === sessionId) {
+      if (route.provider === provider && route.providerSessionId === sessionId) {
         return true;
       }
     }
@@ -155,8 +262,9 @@ export class AutoThreadDiscovery {
   }
 
   private async createThreadForSession(snapshot: SessionSnapshot): Promise<DiscoveredThread | null> {
+    const provider = snapshotProvider(snapshot);
     const routeMap = this.getThreadRoutes();
-    if (this.isAlreadyMapped(snapshot.sessionId)) {
+    if (this.isAlreadyMapped(snapshot.sessionId, provider)) {
       return null;
     }
 
@@ -208,7 +316,7 @@ export class AutoThreadDiscovery {
       threadId,
       parentChannelId,
       mappingKey: mapping?.key ?? 'fallback',
-      provider: 'claude',
+      provider,
       cwd: snapshot.projectPath,
       model: snapshot.model,
       slug: snapshot.slug,
@@ -222,7 +330,7 @@ export class AutoThreadDiscovery {
       threadId,
       parentChannelId,
       mappingKey: discovered.mappingKey,
-      provider: 'claude',
+      provider,
       providerSessionId: snapshot.sessionId,
       cwd: snapshot.projectPath,
       createdAt: discovered.createdAt,
@@ -235,7 +343,9 @@ export class AutoThreadDiscovery {
       await this.discordClient.sendEmbed(threadId, formatInitialEmbed(snapshot, worktreeMetadata?.task));
     }
 
-    console.log(`[AutoThread] discovered session=${snapshot.sessionId} thread=${threadId}`);
+    console.log(
+      `[AutoThread] discovered provider=${provider} session=${snapshot.sessionId} thread=${threadId}`,
+    );
     return discovered;
   }
 
@@ -249,12 +359,13 @@ export class AutoThreadDiscovery {
 
     this.discoveredMap.clear();
     for (const item of loaded) {
-      this.discoveredMap.set(item.sessionId, item);
+      const provider = discoveredProvider(item);
+      this.discoveredMap.set(buildDiscoveredKey(item), item);
 
       // 재시작 복구: 기존 route 맵 복원
       let exists = false;
       for (const route of routeMap.values()) {
-        if (route.provider === 'claude' && route.providerSessionId === item.sessionId) {
+        if (route.provider === provider && route.providerSessionId === item.sessionId) {
           exists = true;
           break;
         }
@@ -264,7 +375,7 @@ export class AutoThreadDiscovery {
           threadId: item.threadId,
           parentChannelId: item.parentChannelId,
           mappingKey: item.mappingKey,
-          provider: 'claude',
+          provider,
           providerSessionId: item.sessionId,
           cwd: item.cwd,
           createdAt: item.createdAt,
@@ -283,9 +394,10 @@ export class AutoThreadDiscovery {
     this.lastWatchAtBySession.clear();
 
     const now = Date.now();
-    for (const sessionId of this.discoveredMap.keys()) {
-      const lastWatchAt = loaded.get(sessionId) ?? now;
-      this.lastWatchAtBySession.set(sessionId, lastWatchAt);
+    for (const [key, item] of this.discoveredMap.entries()) {
+      const legacyKey = item.provider === 'claude' ? item.sessionId : null;
+      const lastWatchAt = loaded.get(key) ?? (legacyKey ? loaded.get(legacyKey) : undefined) ?? now;
+      this.lastWatchAtBySession.set(key, lastWatchAt);
     }
     await this.saveMonitorState();
   }
@@ -301,17 +413,17 @@ export class AutoThreadDiscovery {
       ? this.config.monitorIntervalMs
       : 10 * 60_000;
     const now = Date.now();
-    const sessionMap = new Map(sessions.map((session) => [session.sessionId, session]));
+    const sessionMap = new Map(sessions.map((session) => [buildSnapshotKey(session), session]));
     let stateUpdated = false;
 
-    for (const discovered of this.discoveredMap.values()) {
-      const snapshot = sessionMap.get(discovered.sessionId);
+    for (const [key, discovered] of this.discoveredMap.entries()) {
+      const snapshot = sessionMap.get(key);
       if (!snapshot) continue;
       if (this.isExcludedSnapshot(snapshot)) continue;
 
-      const lastWatchAt = this.lastWatchAtBySession.get(discovered.sessionId);
+      const lastWatchAt = this.lastWatchAtBySession.get(key);
       if (!lastWatchAt) {
-        this.lastWatchAtBySession.set(discovered.sessionId, now);
+        this.lastWatchAtBySession.set(key, now);
         stateUpdated = true;
         continue;
       }
@@ -327,13 +439,13 @@ export class AutoThreadDiscovery {
         console.error(`[AutoThread] monitor log notify failed: ${discovered.sessionId}`, error);
       }
 
-      this.lastWatchAtBySession.set(discovered.sessionId, now);
+      this.lastWatchAtBySession.set(key, now);
       stateUpdated = true;
     }
 
-    for (const sessionId of [...this.lastWatchAtBySession.keys()]) {
-      if (this.discoveredMap.has(sessionId)) continue;
-      this.lastWatchAtBySession.delete(sessionId);
+    for (const key of [...this.lastWatchAtBySession.keys()]) {
+      if (this.discoveredMap.has(key)) continue;
+      this.lastWatchAtBySession.delete(key);
       stateUpdated = true;
     }
 
@@ -363,4 +475,4 @@ export class AutoThreadDiscovery {
 export type { AutoThreadConfig, DiscoveredThread } from './types.ts';
 export { AutoThreadStore } from './store.ts';
 export { resolveMapping, resolveMappingForSession, extractOriginalProjectFromWorktree } from './resolver.ts';
-export { formatInitialEmbed, formatStateChangeMessage } from './formatter.ts';
+export { formatInitialEmbed, formatStateChangeMessage, formatActivityPhaseChangeMessage } from './formatter.ts';

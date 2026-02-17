@@ -1,7 +1,7 @@
 import { watch, type FSWatcher } from 'node:fs';
 import type { SessionSnapshot, MonitorStatus, ClaudeProcess } from './types.ts';
 import { getClaudeProcesses, enrichProcesses, discoverProjects, encodeProjectKey, CLAUDE_HOMES } from './discovery.ts';
-import { tailJsonl, extractSessionInfo } from './parser.ts';
+import { tailJsonl, extractSessionInfo, determineActivityPhase } from './parser.ts';
 
 export { type SessionSnapshot, type MonitorStatus } from './types.ts';
 export {
@@ -25,7 +25,7 @@ export class ClaudeSessionMonitor {
   private refreshQueued = false;
 
   constructor(
-    private pollIntervalMs = 15_000,
+    private pollIntervalMs = 30_000,
     private watchDebounceMs = 10_000,
   ) {}
 
@@ -131,6 +131,9 @@ export class ClaudeSessionMonitor {
             existing.cpuPercent = proc?.cpuPercent ?? null;
             existing.memMb = proc?.memMb ?? null;
             existing.state = this.determineState(proc ?? null, jsonlFile.mtime, now);
+            existing.activityPhase = existing.state === 'active'
+              ? (existing.activityPhase ?? 'busy')
+              : null;
             seen.add(sessionId);
             continue;
           }
@@ -145,12 +148,14 @@ export class ClaudeSessionMonitor {
           const projectPath = info.cwd || proc?.cwd || '';
           const projectName = projectPath.split('/').pop() || proj.key;
 
+          const state = this.determineState(proc ?? null, jsonlFile.mtime, now);
           const snapshot: SessionSnapshot = {
+            provider: 'claude',
             sessionId: info.sessionId || sessionId,
             projectPath,
             projectName,
             slug: info.slug || sessionId.slice(0, 8),
-            state: this.determineState(proc ?? null, jsonlFile.mtime, now),
+            state,
             pid: proc?.pid ?? null,
             cpuPercent: proc?.cpuPercent ?? null,
             memMb: proc?.memMb ?? null,
@@ -165,6 +170,7 @@ export class ClaudeSessionMonitor {
             waitToolNames: info.waitToolNames,
             startedAt: info.startedAt,
             lastActivity: info.lastActivity,
+            activityPhase: state === 'active' ? determineActivityPhase(info) : null,
             jsonlPath,
           };
 
@@ -190,6 +196,7 @@ export class ClaudeSessionMonitor {
               const info = extractSessionInfo(entries);
 
               this.sessions.set(proc.sessionId, {
+                provider: 'claude',
                 sessionId: proc.sessionId,
                 projectPath: proc.cwd || info.cwd,
                 projectName: (proc.cwd || info.cwd).split('/').pop() || encodedCwd,
@@ -209,6 +216,7 @@ export class ClaudeSessionMonitor {
                 waitToolNames: info.waitToolNames,
                 startedAt: info.startedAt,
                 lastActivity: info.lastActivity,
+                activityPhase: determineActivityPhase(info),
                 jsonlPath,
               });
               seen.add(proc.sessionId);
@@ -236,12 +244,14 @@ export class ClaudeSessionMonitor {
           if (entries.length === 0) continue;
           const info = extractSessionInfo(entries);
 
+          const fallbackState = this.determineState(proc, unmatched.mtime, now);
           this.sessions.set(sid, {
+            provider: 'claude',
             sessionId: info.sessionId || sid,
             projectPath: proc.cwd || info.cwd,
             projectName: (proc.cwd || info.cwd).split('/').pop() || encodedCwd,
             slug: info.slug || sid.slice(0, 8),
-            state: this.determineState(proc, unmatched.mtime, now),
+            state: fallbackState,
             pid: proc.pid,
             cpuPercent: proc.cpuPercent,
             memMb: proc.memMb,
@@ -256,6 +266,7 @@ export class ClaudeSessionMonitor {
             waitToolNames: info.waitToolNames,
             startedAt: info.startedAt,
             lastActivity: info.lastActivity,
+            activityPhase: fallbackState === 'active' ? determineActivityPhase(info) : null,
             jsonlPath,
           });
           seen.add(sid);

@@ -1,10 +1,19 @@
 import type { SessionSnapshot, MonitorStatus, EmbedData } from './types.ts';
 
+import type { ActivityPhase } from './types.ts';
+
 const STATE_ICONS: Record<SessionSnapshot['state'], string> = {
   active: '🟢',
   idle: '🟡',
   completed: '⚪',
   stale: '⚫',
+};
+
+const PHASE_LABELS: Record<ActivityPhase, string> = {
+  busy: '🔄 작업 중',
+  interactable: '💬 입력 대기',
+  waiting_permission: '⏳ 승인 대기',
+  waiting_question: '❓ 질문 대기',
 };
 
 function formatWaitReason(s: SessionSnapshot): string | null {
@@ -62,10 +71,13 @@ export function formatSessionsText(status: MonitorStatus): string {
     const model = s.model?.replace('claude-', '')?.replace(/-\d{8}$/, '') || '?';
     const wait = formatWaitReason(s);
 
+    const phaseLabel = s.activityPhase ? PHASE_LABELS[s.activityPhase] : null;
     lines.push(`${icon} ${s.projectName} [${s.slug}]`);
 
     if (wait) {
       lines.push(`   └ ${wait} (${s.turnCount} turns, ${elapsed})`);
+    } else if (phaseLabel && s.state === 'active') {
+      lines.push(`   └ ${phaseLabel} (${s.turnCount} turns, ${elapsed})`);
     } else if (s.state === 'idle') {
       lines.push(`   └ 입력 대기 (${s.turnCount} turns, ${elapsed})`);
     } else if (tools) {
@@ -92,10 +104,11 @@ export function formatSessionDetailText(s: SessionSnapshot): string {
   const model = s.model?.replace('claude-', '')?.replace(/-\d{8}$/, '') || '?';
   const { input, output, cached } = s.tokens;
 
+  const phaseInfo = s.activityPhase ? ` (${PHASE_LABELS[s.activityPhase]})` : '';
   const lines = [
     `${icon} ${s.projectName} [${s.slug}]`,
     '',
-    `상태: ${s.state}`,
+    `상태: ${s.state}${phaseInfo}`,
     `경로: ${shortenPath(s.projectPath)}`,
     `모델: ${model}`,
     `브랜치: ${branch}`,
@@ -140,9 +153,12 @@ export function formatSessionsEmbed(status: MonitorStatus): EmbedData {
     const model = s.model?.replace('claude-', '')?.replace(/-\d{8}$/, '') || '?';
     const wait = formatWaitReason(s);
 
+    const embedPhaseLabel = s.activityPhase ? PHASE_LABELS[s.activityPhase] : null;
     let value: string;
     if (wait) {
       value = `${wait} (${s.turnCount} turns, ${elapsed})`;
+    } else if (embedPhaseLabel && s.state === 'active') {
+      value = `${embedPhaseLabel} (${s.turnCount} turns, ${elapsed})`;
     } else if (s.state === 'idle') {
       value = `입력 대기 (${s.turnCount} turns, ${elapsed})`;
     } else if (tools) {
@@ -175,8 +191,9 @@ export function formatSessionDetailEmbed(s: SessionSnapshot): EmbedData {
   const model = s.model?.replace('claude-', '')?.replace(/-\d{8}$/, '') || '?';
   const { input, output, cached } = s.tokens;
 
+  const detailPhaseInfo = s.activityPhase ? PHASE_LABELS[s.activityPhase] : null;
   const fields = [
-    { name: '상태', value: s.state, inline: true },
+    { name: '상태', value: detailPhaseInfo ? `${s.state} (${detailPhaseInfo})` : s.state, inline: true },
     { name: '모델', value: model, inline: true },
     { name: '브랜치', value: s.gitBranch || 'HEAD', inline: true },
     { name: '턴', value: `${s.turnCount}`, inline: true },

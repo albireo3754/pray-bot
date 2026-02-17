@@ -86,6 +86,60 @@ describe('AutoThreadStore', () => {
     expect(bySession.get('s-2')?.threadId).toBe('t-2');
   });
 
+  test('merges by provider+sessionId (no cross-provider overwrite)', async () => {
+    const root = await createTempRoot();
+    const pathA = join(root, '.claude', 'auto-threads.json');
+    const pathB = join(root, '.claude-silba', 'auto-threads.json');
+
+    await mkdir(join(root, '.claude'), { recursive: true });
+    await mkdir(join(root, '.claude-silba'), { recursive: true });
+
+    await Bun.write(pathA, JSON.stringify({
+      version: 1,
+      mappings: [
+        {
+          sessionId: 'same-id',
+          threadId: 't-claude',
+          parentChannelId: 'p-1',
+          mappingKey: 'k-claude',
+          provider: 'claude',
+          cwd: '/tmp/claude',
+          model: 'sonnet',
+          slug: 'same-id',
+          createdAt: 1,
+          updatedAt: 100,
+          autoDiscovered: true,
+        },
+      ],
+    }, null, 2));
+
+    await Bun.write(pathB, JSON.stringify({
+      version: 1,
+      mappings: [
+        {
+          sessionId: 'same-id',
+          threadId: 't-codex',
+          parentChannelId: 'p-2',
+          mappingKey: 'k-codex',
+          provider: 'codex',
+          cwd: '/tmp/codex',
+          model: 'gpt-5.3-codex',
+          slug: 'same-id',
+          createdAt: 2,
+          updatedAt: 120,
+          autoDiscovered: true,
+        },
+      ],
+    }, null, 2));
+
+    const store = new AutoThreadStore([pathA, pathB]);
+    const loaded = await store.load();
+
+    expect(loaded).toHaveLength(2);
+    expect(loaded.some((item) => item.provider === 'claude' && item.threadId === 't-claude')).toBe(true);
+    expect(loaded.some((item) => item.provider === 'codex' && item.threadId === 't-codex')).toBe(true);
+  });
+
   test('saves mappings to all configured store paths', async () => {
     const root = await createTempRoot();
     const pathA = join(root, '.claude', 'auto-threads.json');

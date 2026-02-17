@@ -31,6 +31,8 @@ type MockSessionInfo = {
   lastActivity: Date;
   waitReason: 'user_question' | 'permission' | null;
   waitToolNames: string[];
+  activityPhase: string | null;
+  lastAssistantStopReason: string | null;
 };
 
 let mockProcesses: MockProcess[] = [];
@@ -53,6 +55,8 @@ const DEFAULT_INFO: MockSessionInfo = {
   lastActivity: new Date(),
   waitReason: null,
   waitToolNames: [],
+  activityPhase: null,
+  lastAssistantStopReason: null,
 };
 
 mock.module('./discovery', () => ({
@@ -82,6 +86,9 @@ mock.module('./parser', () => ({
   extractSessionInfo(entries: Array<{ __path?: string }>) {
     const path = entries[0]?.__path ?? '';
     return mockSessionInfoByPath.get(path) ?? { ...DEFAULT_INFO };
+  },
+  determineActivityPhase() {
+    return 'busy';
   },
 }));
 
@@ -140,6 +147,8 @@ describe('ClaudeSessionMonitor.refresh', () => {
       lastActivity: new Date(now - 5_000),
       waitReason: null,
       waitToolNames: [],
+      activityPhase: null,
+      lastAssistantStopReason: null,
     });
 
     const monitor = new ClaudeSessionMonitor();
@@ -220,6 +229,8 @@ describe('ClaudeSessionMonitor.refresh', () => {
       lastActivity: new Date(now - 1_000),
       waitReason: null,
       waitToolNames: [],
+      activityPhase: null,
+      lastAssistantStopReason: null,
     });
 
     const monitor = new ClaudeSessionMonitor();

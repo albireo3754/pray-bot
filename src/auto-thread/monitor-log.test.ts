@@ -33,6 +33,7 @@ function makeSnapshot(jsonlPath: string): SessionSnapshot {
     waitToolNames: [],
     startedAt: new Date(),
     lastActivity: new Date(),
+    activityPhase: null,
     jsonlPath,
   };
 }

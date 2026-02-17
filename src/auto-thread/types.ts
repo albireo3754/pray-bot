@@ -28,7 +28,7 @@ export interface DiscoveredThread {
   threadId: string;
   parentChannelId: string;
   mappingKey: string;
-  provider: 'claude';
+  provider: 'claude' | 'codex';
   cwd: string;
   model: string | null;
   slug: string;

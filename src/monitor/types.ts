@@ -1,3 +1,14 @@
+/**
+ * Active 세션 내 세부 활동 단계.
+ * state === 'active' 일 때만 의미 있음.
+ * completed/stale/idle에서는 항상 null.
+ */
+export type ActivityPhase =
+  | 'busy'                // LLM 응답 생성 중 또는 Tool 실행 중
+  | 'interactable'        // Turn 완료, 사용자 입력 대기 중
+  | 'waiting_permission'  // Tool 승인 대기
+  | 'waiting_question';   // AskUserQuestion 응답 대기
+
 export interface ClaudeProcess {
   pid: number;
   sessionId: string | null;
@@ -8,6 +19,7 @@ export interface ClaudeProcess {
 }
 
 export interface SessionSnapshot {
+  provider?: 'claude' | 'codex';
   sessionId: string;
   projectPath: string;
   projectName: string;
@@ -38,8 +50,15 @@ export interface SessionSnapshot {
   startedAt: Date | null;
   lastActivity: Date;
 
+  // Activity phase (active sessions only)
+  activityPhase: ActivityPhase | null;
+
   // JSONL path
   jsonlPath: string;
+
+  // Codex-only metadata
+  originator?: string | null;
+  source?: string | null;
 }
 
 export interface MonitorStatus {

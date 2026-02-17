@@ -1,8 +1,9 @@
-import type { SessionSnapshot } from '../monitor/types.ts';
+import type { SessionSnapshot, ActivityPhase } from '../monitor/types.ts';
 import type { EmbedData } from '../discord/types.ts';
 import { extractOriginalProjectFromWorktree } from './resolver.ts';
 
 export function formatInitialEmbed(snapshot: SessionSnapshot, worktreeTask?: string): EmbedData {
+  const provider = snapshot.provider === 'codex' ? 'Codex' : 'Claude';
   const waiting = snapshot.waitReason
     ? `${snapshot.waitReason}${snapshot.waitToolNames.length > 0 ? ` (${snapshot.waitToolNames.join(', ')})` : ''}`
     : '-';
@@ -54,9 +55,26 @@ export function formatInitialEmbed(snapshot: SessionSnapshot, worktreeTask?: str
     inline: false,
   });
 
+  if (snapshot.provider === 'codex') {
+    if (snapshot.originator) {
+      fields.push({
+        name: 'Originator',
+        value: snapshot.originator,
+        inline: true,
+      });
+    }
+    if (snapshot.source) {
+      fields.push({
+        name: 'Source',
+        value: snapshot.source,
+        inline: true,
+      });
+    }
+  }
+
   return {
-    title: '새 Claude 세션 감지',
-    color: 0x7c3aed,
+    title: `새 ${provider} 세션 감지`,
+    color: snapshot.provider === 'codex' ? 0x10a37f : 0x7c3aed,
     fields,
     footer: { text: 'Auto-discovered by pray-bot' },
     timestamp: true,
@@ -83,4 +101,28 @@ export function formatStateChangeMessage(
   }
 
   return `세션 상태 변경: ${previous} -> ${current.state}`;
+}
+
+export function formatActivityPhaseChangeMessage(
+  previousPhase: ActivityPhase | null,
+  currentPhase: ActivityPhase | null,
+  current: SessionSnapshot,
+): string | null {
+  if (previousPhase === currentPhase) return null;
+
+  if (currentPhase === 'interactable') {
+    return '세션이 대기 중입니다. Discord에서 메시지를 보낼 수 있습니다.';
+  }
+  if (currentPhase === 'busy' && previousPhase === 'interactable') {
+    return '세션이 작업을 시작했습니다.';
+  }
+  if (currentPhase === 'waiting_question') {
+    return '세션이 질문에 대한 답변을 기다리고 있습니다.';
+  }
+  if (currentPhase === 'waiting_permission') {
+    const tools = current.waitToolNames.length > 0 ? current.waitToolNames.join(', ') : 'tool';
+    return `세션이 도구 승인을 기다리고 있습니다: ${tools}`;
+  }
+
+  return null;
 }

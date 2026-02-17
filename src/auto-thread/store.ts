@@ -25,9 +25,11 @@ export class AutoThreadStore {
     for (const storePath of this.storePaths) {
       const loaded = await this.loadFromPath(storePath);
       for (const item of loaded) {
-        const existing = merged.get(item.sessionId);
+        const provider = item.provider === 'codex' ? 'codex' : 'claude';
+        const key = `${provider}:${item.sessionId}`;
+        const existing = merged.get(key);
         if (!existing || item.updatedAt > existing.updatedAt) {
-          merged.set(item.sessionId, item);
+          merged.set(key, item);
         }
       }
     }

@@ -1,3 +1,5 @@
+import type { ActivityPhase } from './types.ts';
+
 export interface JsonlEntry {
   type: string;
   sessionId?: string;
@@ -44,6 +46,8 @@ export interface SessionInfo {
   lastActivity: Date;
   waitReason: 'user_question' | 'permission' | null;
   waitToolNames: string[];
+  activityPhase: ActivityPhase | null;
+  lastAssistantStopReason: string | null;
 }
 
 /**
@@ -90,6 +94,7 @@ export function extractSessionInfo(entries: JsonlEntry[]): SessionInfo {
   let model: string | null = null;
   let turnCount = 0;
   let lastUserMessage: string | null = null;
+  let lastAssistantStopReason: string | null = null;
   const currentTools: string[] = [];
   let inputTokens = 0;
   let outputTokens = 0;
@@ -151,6 +156,9 @@ export function extractSessionInfo(entries: JsonlEntry[]): SessionInfo {
           currentTools.push(...tools);
         }
       }
+
+      // Track the last assistant stop_reason
+      lastAssistantStopReason = msg?.stop_reason ?? null;
     }
   }
 
@@ -194,7 +202,7 @@ export function extractSessionInfo(entries: JsonlEntry[]): SessionInfo {
     break;
   }
 
-  return {
+  const info: SessionInfo = {
     sessionId,
     slug,
     cwd,
@@ -209,5 +217,11 @@ export function extractSessionInfo(entries: JsonlEntry[]): SessionInfo {
     lastActivity: lastActivity.getTime() === 0 ? new Date() : lastActivity,
     waitReason,
     waitToolNames,
+    activityPhase: null,
+    lastAssistantStopReason,
   };
+
+  return info;
 }
+
+export { determineActivityPhase } from './activity-phase.ts';
