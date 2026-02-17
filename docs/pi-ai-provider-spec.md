@@ -155,10 +155,21 @@ Potential toggle:
 
 ## 10) Test Plan
 
+### 10.1 Baseline for early integration tests
+
+For initial validation in local/dev environments, use **Codex OAuth** as the default baseline authentication path when testing shared orchestration behavior around provider switching and session handling.
+
+- Rationale: Codex OAuth is already used in the current environment and provides a stable control baseline.
+- Scope: This baseline is for integration sanity checks (session wiring, routing, command flow), not as a substitute for `pi-ai` auth tests.
+- Requirement: `pi-ai` provider itself must still be tested with its own credentials/API path before production use.
+
+### 10.2 Test checklist
+
 1. Unit tests for event mapping (`pi-ai response -> AgentEvent[]`)
 2. Session lifecycle tests (`create -> send -> close`)
 3. Error-path tests (auth failure, network timeout)
 4. Manual discord channel smoke test with provider switch
+5. Cross-check against Codex OAuth baseline behavior (turn lifecycle, stream completion, recoverable errors)
 
 ## 11) Open Questions
 
