@@ -28,3 +28,4 @@ export type { RenderOptions, RenderResult, RenderHooks } from './renderer.ts';
 export { CodexProvider, CodexSession } from './providers/codex.ts';
 export { ClaudeProvider, ClaudeSession } from './providers/claude.ts';
 export { GeminiProvider, GeminiSession } from './providers/gemini.ts';
+export { PiAiProvider, PiAiSession } from './providers/pi-ai.ts';

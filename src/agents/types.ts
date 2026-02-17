@@ -7,7 +7,7 @@
 
 // -- Provider ID --
 
-export type ProviderId = 'codex' | 'claude' | 'gemini';
+export type ProviderId = 'codex' | 'claude' | 'gemini' | 'pi-ai';
 
 // -- Agent Events (unified output) --
 
