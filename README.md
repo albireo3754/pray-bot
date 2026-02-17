@@ -159,6 +159,33 @@ bun test
 bun test src/monitor/
 ```
 
+## Insight
+
+### Using Skills in Claude Code `-p` (Pipe) Mode
+
+Slash commands like `/snowflake` don't work in `claude -p` (non-interactive) mode, but **prompting the model in natural language to use a skill** triggers the Skill tool and works identically to interactive mode.
+
+```bash
+# Slash command (doesn't work)
+claude -p "/snowflake 2026-02-17 10:00 KST"
+
+# Natural language skill invocation (works)
+claude -p "Use the snowflake skill to convert 2026-02-17 10:00 KST"
+```
+
+**Skill injection mechanisms confirmed via JSONL session analysis:**
+
+| Invocation | Message Role | Skill Tool Call | `-p` Support |
+|------------|-------------|-----------------|--------------|
+| User types `/dailylog` | user (isMeta: true) | None (client handles directly) | No |
+| Model auto-invokes `Skill('snowflake')` | user (isMeta: true) | Yes (3-step pattern) | Yes |
+| `--append-system-prompt` | system prompt | None | Yes (but structurally different) |
+
+- When the user types a slash command, the **client** reads SKILL.md and injects it as an `isMeta: true` user message immediately (no Skill tool call)
+- When the model auto-invokes, it follows **Skill tool_use → tool_result → SKILL.md user message** (3-step pattern)
+- Both paths converge: SKILL.md content ends up as a user message with identical effect
+- `--append-system-prompt "$(cat SKILL.md)"` places content in the system prompt instead — structurally different but usable as a workaround
+
 ## License
 
 MIT
