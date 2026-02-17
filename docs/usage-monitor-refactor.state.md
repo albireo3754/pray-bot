@@ -28,8 +28,8 @@ Batching strategy:
 | 13 | Move tests + fix imports | completed | lead | 2026-02-17 | 2026-02-17 |
 | 14 | Write UsageMonitor integration test | completed | lead | 2026-02-17 | 2026-02-17 |
 | 15 | Delete old dirs (monitor/, codex-monitor/) | completed | lead | 2026-02-17 | 2026-02-17 |
-| 16 | claude-parser fixture test (tailJsonl + extractSessionInfo with real JSONL) | pending | — | — | — |
-| 17 | claude-monitor integration test (discovery mock only, parser real) | pending | — | — | — |
+| 16 | claude-parser fixture test (tailJsonl + extractSessionInfo with real JSONL) | completed | lead | 2026-02-17 | 2026-02-17 |
+| 17 | JSONL pipeline integration test (real parser, temp JSONL files) | completed | lead | 2026-02-17 | 2026-02-17 |
 
 ## Session Log
 ### 2026-02-17 — Session 1
@@ -37,3 +37,13 @@ Batching strategy:
 - Batched execution: A(1-6), B(7-9), C(10-12), D(13-15)
 - Key decisions: EmbedData not re-exported from usage-monitor (conflict with discord/types.ts); TokenUsageSession/TokenUsageReport types moved to usage-monitor/types.ts
 - Verification: `npx tsc --noEmit` ✅ | `bun test` 71/71 pass ✅
+
+### 2026-02-17 — Session 2
+- Completed: Tasks 16-17 (fixture-based parser + pipeline integration tests)
+- Task 16: `claude-parser.test.ts` — 13 test cases covering tailJsonl, extractSessionInfo, determineActivityPhase with real JSONL files in temp dirs
+- Task 17: `jsonl-pipeline.test.ts` — 4 test cases covering full JSONL→SessionInfo pipeline with multi-turn sessions, tool resolution, AskUserQuestion, and token cost estimation
+- Key decisions:
+  - Renamed integration test from `claude-monitor-integration.test.ts` to `jsonl-pipeline.test.ts` to avoid Bun mock.module leak (Bun leaks mocks between test files sharing filename prefix)
+  - Used `await import(join(import.meta.dir, '...'))` to bypass Bun's global mock.module scope (absolute paths are not intercepted by mock.module)
+  - Integration test directly calls parser pipeline (not via ClaudeUsageMonitor) to avoid transitive mock contamination
+- Verification: `npx tsc --noEmit` ✅ | `bun test` 88/88 pass ✅
