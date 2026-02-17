@@ -88,7 +88,7 @@ export async function enrichProcesses(processes: ClaudeProcess[]): Promise<void>
 
 /**
  * Encode an absolute path to a Claude project directory key.
- * e.g., `/Users/pray/work/js/kw-chat` → `-Users-pray-work-js-kw-chat`
+ * e.g., `/Users/user/work/my-project` → `-Users-user-work-my-project`
  */
 export function encodeProjectKey(path: string): string {
   return path.replace(/\//g, '-');

@@ -101,7 +101,7 @@ beforeEach(() => {
 describe('ClaudeSessionMonitor.refresh', () => {
   test('builds active session snapshot from process + jsonl metadata', async () => {
     const now = Date.now();
-    const projectKey = '-Users-pray-work-js-kw-chat';
+    const projectKey = '-Users-user-work-js-my-project';
     const fileName = 'session-1.jsonl';
     const jsonlPath = buildPath(projectKey, fileName);
 
@@ -109,7 +109,7 @@ describe('ClaudeSessionMonitor.refresh', () => {
       {
         pid: 4321,
         sessionId: 'session-1',
-        cwd: '/Users/pray/work/js/kw-chat',
+        cwd: '/Users/user/work/js/my-project',
         resumeId: null,
         cpuPercent: 1.2,
         memMb: 256,
@@ -127,8 +127,8 @@ describe('ClaudeSessionMonitor.refresh', () => {
 
     mockSessionInfoByPath.set(jsonlPath, {
       sessionId: 'session-1',
-      slug: 'kwchat',
-      cwd: '/Users/pray/work/js/kw-chat',
+      slug: 'myproject',
+      cwd: '/Users/user/work/js/my-project',
       gitBranch: 'feature/monitor',
       version: '1.0.0',
       model: 'claude-opus-4',
@@ -149,17 +149,17 @@ describe('ClaudeSessionMonitor.refresh', () => {
     expect(status.totalCount).toBe(1);
     expect(status.activeCount).toBe(1);
 
-    const session = monitor.getSession('kwchat');
+    const session = monitor.getSession('myproject');
     expect(session).not.toBeNull();
     expect(session?.state).toBe('active');
-    expect(session?.projectName).toBe('kw-chat');
+    expect(session?.projectName).toBe('my-project');
     expect(session?.pid).toBe(4321);
     expect(session?.gitBranch).toBe('feature/monitor');
   });
 
   test('skips stale sessions older than 24h when no process exists', async () => {
     const oldMtime = Date.now() - 25 * 60 * 60 * 1000;
-    const projectKey = '-Users-pray-work-js-old-project';
+    const projectKey = '-Users-user-work-js-old-project';
     const fileName = 'stale-session.jsonl';
 
     mockProjects = [
@@ -181,7 +181,7 @@ describe('ClaudeSessionMonitor.refresh', () => {
 
   test('does not re-parse unchanged jsonl file due to mtime cache', async () => {
     const now = Date.now();
-    const projectKey = '-Users-pray-work-js-cache-test';
+    const projectKey = '-Users-user-work-js-cache-test';
     const fileName = 'session-cache.jsonl';
     const jsonlPath = buildPath(projectKey, fileName);
 
@@ -189,7 +189,7 @@ describe('ClaudeSessionMonitor.refresh', () => {
       {
         pid: 9001,
         sessionId: 'session-cache',
-        cwd: '/Users/pray/work/js/cache-test',
+        cwd: '/Users/user/work/js/cache-test',
         resumeId: null,
         cpuPercent: 0.5,
         memMb: 128,
@@ -208,7 +208,7 @@ describe('ClaudeSessionMonitor.refresh', () => {
     mockSessionInfoByPath.set(jsonlPath, {
       sessionId: 'session-cache',
       slug: 'cache',
-      cwd: '/Users/pray/work/js/cache-test',
+      cwd: '/Users/user/work/js/cache-test',
       gitBranch: 'main',
       version: '1.0.0',
       model: 'claude-sonnet-4',

@@ -38,7 +38,7 @@ export class WorktreeWatcher {
   private readonly debounceMs: number;
 
   constructor(opts: WorktreeWatcherOptions) {
-    const home = process.env.HOME ?? '/Users/pray';
+    const home = process.env.HOME ?? '/home/user';
     this.rootPath = opts.rootPath ?? join(home, 'worktrees');
     this.guildId = opts.guildId;
     this.discordClient = opts.discordClient;

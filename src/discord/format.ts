@@ -12,7 +12,7 @@ const COLORS = {
   warning: 0xf59e0b,
 } as const;
 
-/** 배포 알림용 Embed (Phase 5) */
+/** 배포 알림용 Embed */
 export function deployNotificationEmbed(params: {
   title: string;
   service: string;
@@ -111,7 +111,7 @@ export function trafficSwitchEmbed(
   }
 
   return {
-    title: '✅ Phase 2 트래픽 전환 완료',
+    title: '✅ 트래픽 전환 완료',
     description: description || undefined,
     color: COLORS.success,
     fields,
@@ -141,6 +141,6 @@ export function errorEmbed(title: string, message: string): EmbedData {
 }
 
 /** Generic @mention(USER_ID:xxx) → Discord text (no mention conversion) */
-export function kwTextToDiscord(text: string): string {
+export function convertMentionText(text: string): string {
   return text.replace(/@([^\s(]+)\(USER_ID:(\d+)\)/g, (_, name) => `@${name}`).trim();
 }

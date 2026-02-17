@@ -16,7 +16,7 @@ export type PersistedDiscordThreadRoute = {
 };
 
 const DB_DIR = join(process.env.HOME ?? '.', '.pray-bot');
-const DB_PATH = join(DB_DIR, 'deploy.db');
+const DB_PATH = join(DB_DIR, 'thread-routes.db');
 
 let db: Database | null = null;
 let upsertStmt: ReturnType<Database['prepare']> | null = null;

@@ -40,7 +40,7 @@ export function buildSlashCommands(): RESTPostAPIChatInputApplicationCommandsJSO
       .addStringOption((option) =>
         option
           .setName('key')
-          .setDescription('쓰레드 키 (예: mg, gate)')
+          .setDescription('쓰레드 키 (예: my-project, api)')
           .setRequired(true),
       ),
 
@@ -51,24 +51,8 @@ export function buildSlashCommands(): RESTPostAPIChatInputApplicationCommandsJSO
       .addStringOption((option) =>
         option
           .setName('key')
-          .setDescription('쓰레드 키 (예: mg, gate)')
+          .setDescription('쓰레드 키 (예: my-project, api)')
           .setRequired(true),
-      ),
-
-    // /kasper [action] - Kasper AI
-    new SlashCommandBuilder()
-      .setName('kasper')
-      .setDescription('Kasper AI 세션 관리')
-      .addStringOption((option) =>
-        option
-          .setName('action')
-          .setDescription('작업')
-          .setRequired(false)
-          .addChoices(
-            { name: 'start', value: 'start' },
-            { name: 'stop', value: 'stop' },
-            { name: 'tools', value: 'tools' },
-          ),
       ),
 
     // /workflow <action> [args...] - 배포 워크플로우
@@ -157,13 +141,8 @@ export function buildSlashCommands(): RESTPostAPIChatInputApplicationCommandsJSO
       .addStringOption((option) =>
         option
           .setName('app')
-          .setDescription('앱')
-          .setRequired(true)
-          .addChoices(
-            { name: 'gate', value: 'gate' },
-            { name: 'push', value: 'push' },
-            { name: 'flight', value: 'flight' },
-          ),
+          .setDescription('앱 이름')
+          .setRequired(true),
       ),
 
     // /restart - pray-bot 프로세스 재시작
@@ -178,7 +157,7 @@ export function buildSlashCommands(): RESTPostAPIChatInputApplicationCommandsJSO
       .addStringOption((option) =>
         option
           .setName('thread-name')
-          .setDescription('워크트리 이름 (예: ws-v5)')
+          .setDescription('워크트리 이름 (예: my-feature)')
           .setRequired(true),
       ),
 
@@ -189,7 +168,7 @@ export function buildSlashCommands(): RESTPostAPIChatInputApplicationCommandsJSO
       .addStringOption((option) =>
         option
           .setName('thread-name')
-          .setDescription('워크트리 이름 (예: ws-v5)')
+          .setDescription('워크트리 이름 (예: my-feature)')
           .setRequired(true),
       ),
 
@@ -434,7 +413,6 @@ export type SlashCommandHandler = (interaction: ChatInputCommandInteraction) => 
 
 /** 3초 이상 걸릴 수 있는 명령어 → auto defer + heartbeat */
 const SLOW_COMMANDS = new Set([
-  'kasper',
   'deploy',
   'workflow',
   'worktree-channel',

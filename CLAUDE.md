@@ -76,6 +76,6 @@ src/
 ## Engineering Rules
 
 - Use Bun-first APIs (Bun.serve, bun:sqlite, etc.)
-- No KakaoWork or internal service references — this is a public repo
+- No internal or organization-specific service references — this is a public repo
 - Keep modules self-contained with minimal cross-dependencies
 - Plugin interface is the extension point — don't add app-specific code to core

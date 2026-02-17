@@ -9,27 +9,27 @@ function registry(mappings: ChannelMapping[]) {
 describe('auto-thread resolver', () => {
   test('resolves by exact and longest-prefix path match', () => {
     const mappings: ChannelMapping[] = [
-      { key: 'work', path: '/Users/pray/work', category: 'misc' },
-      { key: 'pray-bot', path: '/Users/pray/work/js/pray-bot', category: 'JS' },
-      { key: 'js', path: '/Users/pray/work/js', category: 'JS' },
+      { key: 'work', path: '/Users/user/work', category: 'misc' },
+      { key: 'pray-bot', path: '/Users/user/work/js/pray-bot', category: 'JS' },
+      { key: 'js', path: '/Users/user/work/js', category: 'JS' },
     ];
 
-    const exact = resolveMapping('/Users/pray/work/js/pray-bot', registry(mappings));
+    const exact = resolveMapping('/Users/user/work/js/pray-bot', registry(mappings));
     expect(exact?.key).toBe('pray-bot');
 
-    const prefix = resolveMapping('/Users/pray/work/js/pray-bot/tests', registry(mappings));
+    const prefix = resolveMapping('/Users/user/work/js/pray-bot/tests', registry(mappings));
     expect(prefix?.key).toBe('pray-bot');
   });
 
   test('falls back to project name key when path mapping is missing', () => {
     const mappings: ChannelMapping[] = [
-      { key: 'pray-bot', path: '/Users/pray/work/js/pray-bot', category: 'JS' },
-      { key: 'codex', path: '/Users/pray/work/js/pray-bot', category: 'JS' },
+      { key: 'pray-bot', path: '/Users/user/work/js/pray-bot', category: 'JS' },
+      { key: 'codex', path: '/Users/user/work/js/pray-bot', category: 'JS' },
     ];
 
     const resolved = resolveMappingForSession(
       {
-        projectPath: '/Users/pray/worktrees/work-status-v5/pray-bot',
+        projectPath: '/Users/user/worktrees/feature-branch/pray-bot',
         projectName: 'pray-bot',
       },
       registry(mappings),
@@ -40,18 +40,18 @@ describe('auto-thread resolver', () => {
 
   test('normalizes project name for key fallback', () => {
     const mappings: ChannelMapping[] = [
-      { key: 'message-dev', path: '/Users/pray/work/js/message-dev', category: 'JS' },
+      { key: 'my-tool', path: '/Users/user/work/js/my-tool', category: 'JS' },
     ];
 
     const resolved = resolveMappingForSession(
       {
         projectPath: '',
-        projectName: 'Message Dev',
+        projectName: 'My Tool',
       },
       registry(mappings),
     );
 
-    expect(resolved?.key).toBe('message-dev');
+    expect(resolved?.key).toBe('my-tool');
   });
 });
 
@@ -65,9 +65,9 @@ describe('extractOriginalProjectFromWorktree', () => {
   });
 
   test('extracts worktree info from nested path with tilde', () => {
-    const result = extractOriginalProjectFromWorktree('~/worktrees/ws-v5/flight-v2~hotfix');
+    const result = extractOriginalProjectFromWorktree('~/worktrees/dev-thread/my-service~hotfix');
     expect(result).toEqual({
-      originalName: 'flight-v2',
+      originalName: 'my-service',
       worktreeName: 'hotfix',
     });
   });
@@ -111,14 +111,14 @@ describe('resolveMappingForSession with worktree fallback', () => {
     const mappings: ChannelMapping[] = [
       {
         key: 'pray-bot',
-        path: '/Users/pray/work/js/pray-bot',
+        path: '/Users/user/work/js/pray-bot',
         category: 'Projects',
       },
     ];
 
     const result = resolveMappingForSession(
       {
-        projectPath: '/Users/pray/work/js/pray-bot~api',
+        projectPath: '/Users/user/work/js/pray-bot~api',
         projectName: 'pray-bot~api',
       },
       registry(mappings),
@@ -131,14 +131,14 @@ describe('resolveMappingForSession with worktree fallback', () => {
     const mappings: ChannelMapping[] = [
       {
         key: 'other-project',
-        path: '/Users/pray/work/js/other-project',
+        path: '/Users/user/work/js/other-project',
         category: 'Projects',
       },
     ];
 
     const result = resolveMappingForSession(
       {
-        projectPath: '/Users/pray/work/js/pray-bot~api',
+        projectPath: '/Users/user/work/js/pray-bot~api',
         projectName: 'pray-bot~api',
       },
       registry(mappings),
@@ -151,14 +151,14 @@ describe('resolveMappingForSession with worktree fallback', () => {
     const mappings: ChannelMapping[] = [
       {
         key: 'pray-bot',
-        path: '/Users/pray/work/js/pray-bot',
+        path: '/Users/user/work/js/pray-bot',
         category: 'Projects',
       },
     ];
 
     const result = resolveMappingForSession(
       {
-        projectPath: '/Users/pray/work/js/pray-bot',
+        projectPath: '/Users/user/work/js/pray-bot',
         projectName: 'pray-bot',
       },
       registry(mappings),
@@ -170,20 +170,20 @@ describe('resolveMappingForSession with worktree fallback', () => {
   test('worktree fallback works with normalized keys', () => {
     const mappings: ChannelMapping[] = [
       {
-        key: 'flight-v2',
-        path: '/Users/user/work/rust/my-flight-v2',
+        key: 'my-service',
+        path: '/Users/user/work/rust/my-service',
         category: 'Rust',
       },
     ];
 
     const result = resolveMappingForSession(
       {
-        projectPath: '/Users/pray/worktrees/ws-v5/flight-v2~hotfix',
-        projectName: 'flight-v2~hotfix',
+        projectPath: '/Users/user/worktrees/dev-thread/my-service~hotfix',
+        projectName: 'my-service~hotfix',
       },
       registry(mappings),
     );
 
-    expect(result?.key).toBe('flight-v2');
+    expect(result?.key).toBe('my-service');
   });
 });

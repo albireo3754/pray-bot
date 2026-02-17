@@ -20,9 +20,9 @@ describe('CommandRegistry', () => {
 
   test('resolve by alias', () => {
     const reg = new CommandRegistry();
-    reg.register(mockCmd('/kasper', ['kasper']));
-    expect(reg.resolve('kasper')).toBeTruthy();
-    expect(reg.resolve('kasper')!.name).toBe('/kasper');
+    reg.register(mockCmd('/example', ['example']));
+    expect(reg.resolve('example')).toBeTruthy();
+    expect(reg.resolve('example')!.name).toBe('/example');
   });
 
   test('resolve returns null for unknown', () => {
@@ -42,10 +42,10 @@ describe('CommandRegistry', () => {
   test('formatHelp includes all commands', () => {
     const reg = new CommandRegistry();
     reg.register(mockCmd('/help'));
-    reg.register(mockCmd('/kasper', ['kasper']));
+    reg.register(mockCmd('/example', ['example']));
     const help = reg.formatHelp();
     expect(help).toContain('/help');
-    expect(help).toContain('/kasper');
-    expect(help).toContain('(kasper)');
+    expect(help).toContain('/example');
+    expect(help).toContain('(example)');
   });
 });
