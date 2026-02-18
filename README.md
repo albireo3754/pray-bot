@@ -146,6 +146,28 @@ export function createMyPlugin(): PrayBotPlugin {
 | `GEMINI_API_KEY` | Google Gemini API key |
 | `PORT` | HTTP server port (default: 4488) |
 
+## GitHub Actions: Yuna PR Auto Review
+
+This repository includes two workflows:
+
+- `.github/workflows/yuna-pr-review.yml`
+  - Trigger: `pull_request`
+  - Action: post an automatic Korean review comment for changed code
+- `.github/workflows/yuna-comment-handler.yml`
+  - Trigger: `issue_comment`
+  - Commands:
+    - `/yuna validate <text>`
+    - `/yuna fix <text>`
+  - Action: evaluate feedback validity and optionally apply/push patch commits
+
+### Required repository settings
+
+- **Runner:** self-hosted runner available for this repo
+- **Secrets:** `OPENAI_API_KEY`
+- **Variables (optional):**
+  - `YUNA_OPENAI_MODEL` (default: `gpt-4.1-mini`)
+  - `YUNA_ALLOWED_USER` (default: `pohangjungi`)
+
 ## Development
 
 ```bash
