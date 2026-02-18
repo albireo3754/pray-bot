@@ -14,13 +14,14 @@ export * from './presence/index.ts';
 
 // -- Phase B modules --
 export * from './cron/index.ts';
-export * from './usage-monitor/index.ts';
+export * from './session-monitor/index.ts';
 export * from './codex-server/index.ts';
 export * from './discord/index.ts';
 export * from './auto-thread/index.ts';
 export * from './server/util.ts';
 
 // -- Phase C modules --
+export * from './hooks/index.ts';
 export * from './tools/index.ts';
 export { GitWatcher, type GitWatcherOptions } from './git-watcher.ts';
 export { WorktreeWatcher, type WorktreeWatcherOptions } from './worktree-watcher.ts';

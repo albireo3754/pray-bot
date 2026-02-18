@@ -1,8 +1,9 @@
 import { watch, type FSWatcher } from 'node:fs';
-import type { SessionSnapshot, MonitorStatus, ClaudeProcess, TokenUsageReport, TokenUsageSession } from './types.ts';
+import type { SessionSnapshot, MonitorStatus, ClaudeProcess, TokenUsageReport, TokenUsageSession, ActivityPhase } from './types.ts';
 import { getClaudeProcesses, enrichProcesses, discoverProjects, encodeProjectKey, CLAUDE_HOMES } from './claude-discovery.ts';
 import { tailJsonl, extractSessionInfo, determineActivityPhase } from './claude-parser.ts';
 import type { SessionMonitorProvider } from './index.ts';
+import type { HookAcceptingMonitor, SessionStartHookEvent } from './hook-receiver.ts';
 
 const FIVE_MINUTES = 5 * 60 * 1000;
 const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
@@ -20,7 +21,7 @@ function estimateCost(tokens: { input: number; output: number; cached: number })
   );
 }
 
-export class ClaudeUsageMonitor implements SessionMonitorProvider {
+export class ClaudeSessionMonitor implements SessionMonitorProvider, HookAcceptingMonitor {
   private sessions = new Map<string, SessionSnapshot>();
   private timer: Timer | null = null;
   private watchDebounceTimer: Timer | null = null;
@@ -156,6 +157,13 @@ export class ClaudeUsageMonitor implements SessionMonitorProvider {
           const projectName = projectPath.split('/').pop() || proj.key;
 
           const state = this.determineState(proc ?? null, jsonlFile.mtime, now);
+
+          // Preserve hook-set activityPhase if session already exists (hook is primary source)
+          const prevSnapshot = this.sessions.get(sessionId);
+          const activityPhase = state === 'active'
+            ? (prevSnapshot?.activityPhase ?? determineActivityPhase(info))
+            : null;
+
           const snapshot: SessionSnapshot = {
             provider: 'claude',
             sessionId: info.sessionId || sessionId,
@@ -177,7 +185,7 @@ export class ClaudeUsageMonitor implements SessionMonitorProvider {
             waitToolNames: info.waitToolNames,
             startedAt: info.startedAt,
             lastActivity: info.lastActivity,
-            activityPhase: state === 'active' ? determineActivityPhase(info) : null,
+            activityPhase,
             jsonlPath,
           };
 
@@ -407,6 +415,66 @@ export class ClaudeUsageMonitor implements SessionMonitorProvider {
       activeCount: allSessions.filter((s) => s.state === 'active').length,
       totalCount: allSessions.length,
     };
+  }
+
+  // ── HookAcceptingMonitor implementation ──────────────────────────
+
+  /** Hook에서 activityPhase만 업데이트. 세션이 존재하지 않으면 무시. */
+  updateActivityPhase(sessionId: string, phase: ActivityPhase): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    session.activityPhase = session.state === 'active' ? phase : null;
+  }
+
+  /** Hook에서 state 업데이트 (SessionEnd → completed 등). */
+  updateSessionState(sessionId: string, state: SessionSnapshot['state']): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    session.state = state;
+    if (state !== 'active') {
+      session.activityPhase = null;
+    }
+  }
+
+  /** SessionStart hook에서 최소 정보로 skeleton snapshot 생성. 다음 polling에서 보강. */
+  registerSession(event: SessionStartHookEvent): SessionSnapshot {
+    const existing = this.sessions.get(event.session_id);
+    if (existing) {
+      existing.state = 'active';
+      existing.activityPhase = 'busy';
+      if (event.model) existing.model = event.model;
+      return existing;
+    }
+
+    const projectPath = event.cwd || '';
+    const projectName = projectPath.split('/').pop() || 'unknown';
+    const snapshot: SessionSnapshot = {
+      provider: event.provider ?? 'claude',
+      sessionId: event.session_id,
+      projectPath,
+      projectName,
+      slug: event.session_id.slice(0, 8),
+      state: 'active',
+      pid: null,
+      cpuPercent: null,
+      memMb: null,
+      model: event.model ?? null,
+      gitBranch: null,
+      version: null,
+      turnCount: 0,
+      lastUserMessage: null,
+      currentTools: [],
+      tokens: { input: 0, output: 0, cached: 0 },
+      waitReason: null,
+      waitToolNames: [],
+      startedAt: new Date(),
+      lastActivity: new Date(),
+      activityPhase: 'busy',
+      jsonlPath: event.transcript_path || '',
+    };
+
+    this.sessions.set(event.session_id, snapshot);
+    return snapshot;
   }
 
   private determineState(

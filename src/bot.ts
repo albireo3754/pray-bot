@@ -3,6 +3,9 @@ import type { PrayBotPlugin, PluginContext, RouteDefinition, CronActionDefinitio
 import type { CommandDefinition } from './command/registry.ts';
 import { CommandRegistry } from './command/registry.ts';
 import { AgentSessionManager } from './agents/manager.ts';
+import { createHookRoute, type HookAcceptingMonitor } from './session-monitor/hook-receiver.ts';
+import { ensureHooksRegistered } from './hooks/claude-settings.ts';
+import type { AutoThreadDiscovery } from './auto-thread/index.ts';
 import type { Server } from 'bun';
 
 type WebSocketData = Record<string, unknown>;
@@ -46,8 +49,26 @@ export class PrayBot {
     this.routes.push(route);
   }
 
+  /** Register the hook receiver route (POST /api/hook) for activity phase detection. */
+  registerHookRoute(
+    providers: Map<string, HookAcceptingMonitor>,
+    autoThread: AutoThreadDiscovery,
+  ): void {
+    this.routes.push(createHookRoute(providers, autoThread));
+  }
+
   /** Start the bot: initialize plugins, start server */
   async start(): Promise<void> {
+    // Auto-register Claude Code hooks (best-effort)
+    try {
+      const result = ensureHooksRegistered();
+      if (result.added.length > 0) {
+        console.log(`[PrayBot] Registered hooks: ${result.added.join(', ')}`);
+      }
+    } catch (err) {
+      console.warn('[PrayBot] Hook registration skipped:', err);
+    }
+
     // Build plugin context
     const ctx: PluginContext = {
       agents: this.agents,
