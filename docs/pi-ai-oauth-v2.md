@@ -3,7 +3,7 @@
 > status: draft
 > created: 2026-02-18
 > updated: 2026-02-18
-> revision: 2
+> revision: 3
 
 ## 0. LLM Work Guide
 
@@ -106,13 +106,15 @@ export async function refreshAccessToken(
 export interface TokenStoreEntry {
   provider: string;        // "pi-ai"
   tokens: OAuthTokens;
-  config: OAuthConfig;     // Saved for refresh
   updatedAt: string;       // ISO 8601
+  // OAuthConfig is NOT stored — resolved from env vars at runtime
+  // to prevent config-poisoning (malicious tokenUrl substitution)
 }
 
 /**
  * File-based token store at ~/.pray-bot/auth/<provider>.json
- * Follows OpenClaw pattern: file locking for concurrent access.
+ * - Directory: 0700 (user-only), Files: 0600, written atomically via tmp+rename
+ * - File locking for concurrent refresh access
  */
 export class TokenStore {
   constructor(private baseDir?: string);  // Default: ~/.pray-bot/auth
@@ -120,7 +122,12 @@ export class TokenStore {
   /** Read stored tokens. Returns null if not found or file missing. */
   read(provider: string): TokenStoreEntry | null;
 
-  /** Write tokens atomically. Creates directory if needed. */
+  /**
+   * Write tokens atomically:
+   * 1. Write to <provider>.json.tmp (mode 0600)
+   * 2. rename() to <provider>.json
+   * Directory created with mode 0700 if needed.
+   */
   write(provider: string, entry: TokenStoreEntry): void;
 
   /** Delete stored tokens. */
@@ -128,10 +135,11 @@ export class TokenStore {
 
   /**
    * Get valid access token. Auto-refreshes if expired.
+   * config is required for refresh — NOT loaded from file.
    * Uses file lock during refresh to prevent race conditions.
    * Returns null if no stored tokens or refresh fails.
    */
-  getValidToken(provider: string): Promise<string | null>;
+  getValidToken(provider: string, config: OAuthConfig): Promise<string | null>;
 }
 ```
 
@@ -158,17 +166,22 @@ export async function runCommand(cmd: CLICommand): Promise<void>;
 ```
 CLI argv parse
   → "login" + "pi-ai" detected
-  → Load Pi-AI OAuth config (env vars or defaults)
+  → Load Pi-AI OAuth config from env vars (PIAI_OAUTH_*)
   → generatePKCE() → { verifier, challenge, state }
-  → Start Bun.serve() on localhost:19284
+  → Start Bun.serve() on 127.0.0.1:19284 (loopback only, NOT 0.0.0.0)
+      - 120-second timeout; exits with error if not completed
+      - Only GET /callback handled; all other paths return HTTP 404
   → Build authorize URL with: client_id, redirect_uri, code_challenge, state, scope
-  → Open browser (macOS: `open <url>`)
+  → Open browser (macOS: `open <url>`, Linux: `xdg-open <url>`)
+  → Always print URL to stdout as fallback: "Open this URL in your browser: <url>"
   → Print: "Waiting for authorization... (press Ctrl+C to cancel)"
-  → Browser: user logs in → redirect to localhost:19284/callback?code=XXX&state=YYY
-  → Verify state matches
+  → Browser: user logs in → redirect to 127.0.0.1:19284/callback?code=XXX&state=YYY
+  → Verify state matches; on mismatch → respond static HTML error, shutdown, exit error
   → POST token URL with: code, code_verifier, client_id, redirect_uri, grant_type
   → Receive: { access_token, refresh_token, expires_in }
-  → Save to ~/.pray-bot/auth/pi-ai.json via TokenStore
+  → Save to ~/.pray-bot/auth/pi-ai.json via TokenStore.write()
+      - Respond static HTML: "<h1>Authentication successful</h1><p>You can close this tab.</p>"
+      - No query parameters reflected in response body
   → Print: "Logged in successfully!"
   → Shutdown callback server + exit
 ```
@@ -177,14 +190,15 @@ CLI argv parse
 
 ```
 PiAiProvider.initialize()
-  → tokenStore.getValidToken("pi-ai")
+  → Resolve config from env vars (PIAI_OAUTH_TOKEN_URL, etc.) — never from file
+  → tokenStore.getValidToken("pi-ai", config)
     → Read ~/.pray-bot/auth/pi-ai.json
     → If not found → fallback to PIAI_API_KEY
     → If found + not expired → return accessToken
     → If found + expired:
       → Acquire file lock (~/.pray-bot/auth/pi-ai.lock)
       → Re-read file (another process may have refreshed)
-      → If still expired → POST refresh_token to token URL
+      → If still expired → POST config.tokenUrl with refresh_token (from file, URL from env)
         → Success → Save new tokens → release lock → return new accessToken
         → Failure → release lock → log error → throw "Re-login required"
   → new Codex({ apiKey: resolvedToken, baseURL: ... })
@@ -226,6 +240,34 @@ isAvailable()
 | env | `PIAI_OAUTH_CLIENT_ID` | OAuth client ID |
 | env | `PIAI_OAUTH_SCOPES` | OAuth scopes (comma-separated) |
 
+### 3.6 Security Considerations
+
+**Token file security**
+
+| Item | Requirement |
+|------|-------------|
+| Auth directory | Created with mode `0700` (user-only) |
+| Token file | Written with mode `0600` (user-only read/write) |
+| Atomic write | Write to `<provider>.json.tmp` → `rename()` → `<provider>.json` |
+| Stored fields | `tokens` + `updatedAt` ONLY — `OAuthConfig` is NOT stored |
+
+OAuthConfig (including `tokenUrl`) is excluded from the token file to prevent config-poisoning: an attacker who can write to the file cannot redirect token refresh requests to an arbitrary server.
+
+**Callback server**
+
+| Item | Requirement |
+|------|-------------|
+| Bind address | `127.0.0.1` (loopback only) — never `0.0.0.0` |
+| Timeout | 120 seconds; exit with error if auth not completed |
+| Path routing | Only `GET /callback` handled; all other paths → HTTP 404 |
+| Response body | Static HTML only — no query parameters reflected |
+| Error page | Static HTML — no `error_description` or state values in body |
+
+**Trust boundary**
+
+- `tokenUrl` and `authorizeUrl` are always resolved from env vars (`PIAI_OAUTH_TOKEN_URL`, `PIAI_OAUTH_AUTHORIZE_URL`) at runtime, never from disk
+- `state` parameter verified before proceeding to token exchange; mismatch → shutdown server + exit error
+
 ## 4. Verification Criteria
 
 - [ ] Given: No stored tokens, no `PIAI_API_KEY` / When: `pray-bot login pi-ai --status` / Then: "Not authenticated" 출력
@@ -242,6 +284,11 @@ isAvailable()
 - [ ] Given: Token exchange 네트워크 실패 / When: auth code → token POST / Then: 에러 로깅 + "Token exchange failed" 메시지 출력
 - [ ] Given: Stored tokens의 refresh_token이 서버에서 거부 / When: `getValidToken()` / Then: 에러 로깅 + throw "Re-login required"
 - [ ] No regression: 기존 `PIAI_API_KEY` 방식이 그대로 동작
+- [ ] Given: `TokenStore.write()` 실행 / When: 파일 생성 후 퍼미션 확인 / Then: `~/.pray-bot/auth/` = `0700`, `pi-ai.json` = `0600`
+- [ ] Given: 콜백 서버 실행 중 / When: `0.0.0.0` 바인딩 여부 확인 / Then: `127.0.0.1`에만 바인딩
+- [ ] Given: `/callback` 이외 경로 요청 / When: callback server에 `GET /other` / Then: HTTP 404 반환
+- [ ] Given: 120초 내 인증 미완료 / When: `pray-bot login pi-ai` 실행 후 대기 / Then: timeout 에러 메시지 출력 + 서버 종료
+- [ ] Given: callback 오류 발생 / When: 브라우저에 HTML 응답 / Then: 응답 body에 query param 값 미포함 (XSS 방지)
 
 ## 5. Risks
 
@@ -281,6 +328,9 @@ isAvailable()
 | 2 | 2026-02-18 | `~/.pray-bot/auth/` 에 토큰 저장 | Codex의 `~/.codex/` 패턴과 일관성 |
 | 3 | 2026-02-18 | `PIAI_API_KEY` fallback 유지 | Backward compatibility |
 | 4 | 2026-02-18 | bin 등록으로 `pray-bot` CLI | 사용자 선택 |
+| 5 | 2026-02-18 | OAuthConfig를 토큰 파일에서 제외 | Config poisoning 방지 — 파일 조작으로 tokenUrl 변조 불가 (spec-review must-fix) |
+| 6 | 2026-02-18 | 콜백 서버 127.0.0.1 바인딩 + 120초 timeout + 정적 HTML 응답 | 로컬 네트워크 노출 방지 + Reflected XSS 방지 (spec-review must-fix) |
+| 7 | 2026-02-18 | 파일 퍼미션 0700/0600 + atomic write (tmp+rename) 명시 | 리프레시 토큰 world-readable 방지 (spec-review must-fix) |
 
 ## 9. Handoff Snapshot
 
@@ -290,3 +340,4 @@ isAvailable()
 |-----|------|---------|
 | 1 | 2026-02-18 | Initial draft |
 | 2 | 2026-02-18 | Review 반영: CLI 타입 정의, 에러 케이스 5개 추가, refresh 실패 시 throw+log 확정, PKCE 검증 기준 |
+| 3 | 2026-02-18 | spec-review must-fix 반영: TokenStoreEntry config 제거, 파일 퍼미션 0700/0600 명시, 콜백 서버 127.0.0.1+timeout+정적HTML, §3.6 추가, §4 보안 기준 5개 추가 |
