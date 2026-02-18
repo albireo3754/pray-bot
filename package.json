@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "module": "src/index.ts",
   "type": "module",
+  "bin": {
+    "pray-bot": "./src/cli.ts"
+  },
   "exports": {
     ".": "./src/index.ts",
     "./*": "./src/*/index.ts"

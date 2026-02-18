@@ -16,21 +16,55 @@ import type {
   ProviderCapabilities,
   ProviderId,
 } from '../types.ts';
+import { TokenStore } from '../../auth/token-store.ts';
+import { DEFAULT_CALLBACK_PORT, type OAuthConfig } from '../../auth/oauth-pkce.ts';
+
+/** Load Pi-AI OAuth config from env vars (never from stored file). */
+function loadPiAiConfig(): OAuthConfig | null {
+  const authorizeUrl = process.env.PIAI_OAUTH_AUTHORIZE_URL;
+  const tokenUrl = process.env.PIAI_OAUTH_TOKEN_URL;
+  const clientId = process.env.PIAI_OAUTH_CLIENT_ID;
+  if (!authorizeUrl || !tokenUrl || !clientId) return null;
+  return {
+    authorizeUrl,
+    tokenUrl,
+    clientId,
+    scopes: (process.env.PIAI_OAUTH_SCOPES ?? 'openid').split(',').map(s => s.trim()),
+    callbackPort: parseInt(process.env.PIAI_OAUTH_CALLBACK_PORT ?? String(DEFAULT_CALLBACK_PORT), 10),
+  };
+}
 
 export class PiAiProvider implements AgentProvider {
   readonly id: ProviderId = 'pi-ai';
   readonly name = 'Pi-AI';
   private codex: Codex | null = null;
+  private tokenStore = new TokenStore();
 
   async initialize(): Promise<void> {
+    // Priority: OAuth token store > PIAI_API_KEY env var
+    // Catch refresh failures so a stale token file doesn't block the API key fallback.
+    let oauthToken: string | null = null;
+    try {
+      oauthToken = await this.tokenStore.getValidToken('pi-ai', () => loadPiAiConfig());
+    } catch {
+      // Refresh failed (e.g. no OAuth config in env) — fall through to PIAI_API_KEY.
+    }
+    const apiKey = oauthToken ?? process.env.PIAI_API_KEY;
+
+    if (!apiKey) {
+      throw new Error(
+        'No Pi-AI credentials found. Run `pray-bot login pi-ai` or set PIAI_API_KEY.',
+      );
+    }
+
     this.codex = new Codex({
-      apiKey: process.env.PIAI_API_KEY,
+      apiKey,
       ...(process.env.PIAI_BASE_URL && { baseURL: process.env.PIAI_BASE_URL }),
     });
   }
 
   isAvailable(): boolean {
-    return !!process.env.PIAI_API_KEY;
+    return this.tokenStore.read('pi-ai') !== null || !!process.env.PIAI_API_KEY;
   }
 
   capabilities(): ProviderCapabilities {

@@ -38,3 +38,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # Claude Code local memory
 CLAUDE.local.md
+
+# User-local channel config (machine-specific paths)
+channels.yaml
