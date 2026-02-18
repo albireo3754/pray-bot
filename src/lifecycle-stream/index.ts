@@ -18,3 +18,13 @@ export {
   DEFAULT_STREAM_PATH,
   type FileStreamConsumerOptions,
 } from './file-stream-consumer.ts';
+
+export {
+  JsonlFileTailer,
+  AbstractConsumerGroup,
+  InMemoryOffsetStore,
+  FileOffsetStore,
+  type JsonlFileTailerOptions,
+  type OffsetStore,
+  type OffsetRecord,
+} from './jsonl-file-tailer.ts';
