@@ -121,16 +121,14 @@ export class PrayBot {
     return this.pluginManager.list();
   }
 
-  private async handleRequest(req: Request): Promise<Response> {
+  /**
+   * Try handling a request using registered plugin/routes.
+   * Returns null when no route matches (useful for external servers).
+   */
+  async handleRouteRequest(req: Request): Promise<Response | null> {
     const url = new URL(req.url);
     const method = req.method.toUpperCase();
 
-    // Health check
-    if (method === 'GET' && url.pathname === '/health') {
-      return Response.json({ status: 'ok' });
-    }
-
-    // Match registered routes
     for (const route of this.routes) {
       if (route.method === method && matchPath(route.path, url.pathname)) {
         try {
@@ -144,6 +142,21 @@ export class PrayBot {
         }
       }
     }
+
+    return null;
+  }
+
+  private async handleRequest(req: Request): Promise<Response> {
+    const url = new URL(req.url);
+    const method = req.method.toUpperCase();
+
+    // Health check
+    if (method === 'GET' && url.pathname === '/health') {
+      return Response.json({ status: 'ok' });
+    }
+
+    const routed = await this.handleRouteRequest(req);
+    if (routed) return routed;
 
     return Response.json({ status: 'error', error: 'Not found' }, { status: 404 });
   }
