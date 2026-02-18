@@ -2,7 +2,13 @@
  * install-hooks.ts
  *
  * Installs lifecycle-logger.sh as a symlink under ~/.claude/hooks/
- * and registers it in ~/.claude/settings.json for 4 hook events.
+ * and registers it in ~/.claude/settings.json for hook events.
+ *
+ * v2 changes vs v1:
+ *   - Stop → turn.end (v1 오류: Stop은 매 턴 완료, 세션 종료가 아님)
+ *   - SessionEnd → session.lifecycle ended (실제 세션 종료)
+ *   - UserPromptSubmit → turn.start (prompt 캡처)
+ *   - Notification → session.activity (activityType 캡처)
  *
  * Usage: bun run src/lifecycle-stream/install-hooks.ts
  */
@@ -16,11 +22,10 @@ const HOME = process.env.HOME ?? '';
 const HOOKS_DIR = resolve(HOME, '.claude', 'hooks');
 const SETTINGS_PATH = resolve(HOME, '.claude', 'settings.json');
 
-// Absolute path to the source script (relative to this file)
 const SCRIPT_SRC = resolve(import.meta.dir, 'lifecycle-logger.sh');
 const SCRIPT_DEST = resolve(HOOKS_DIR, 'lifecycle-logger.sh');
 
-// ── Hook definitions ──────────────────────────────────────────────────────
+// ── Hook definitions (v2) ─────────────────────────────────────────────────
 
 const LIFECYCLE_HOOKS = [
   {
@@ -30,10 +35,28 @@ const LIFECYCLE_HOOKS = [
     label: 'SessionStart: lifecycle-logger',
   },
   {
-    event: 'Stop',
+    event: 'SessionEnd',
     matcher: undefined,
     command: `EVENT_TYPE=session.lifecycle PHASE=ended ${SCRIPT_DEST}`,
-    label: 'Stop: lifecycle-logger',
+    label: 'SessionEnd: lifecycle-logger',
+  },
+  {
+    event: 'Stop',
+    matcher: undefined,
+    command: `EVENT_TYPE=turn.end ${SCRIPT_DEST}`,
+    label: 'Stop: lifecycle-logger (turn.end)',
+  },
+  {
+    event: 'UserPromptSubmit',
+    matcher: undefined,
+    command: `EVENT_TYPE=turn.start ${SCRIPT_DEST}`,
+    label: 'UserPromptSubmit: lifecycle-logger (turn.start)',
+  },
+  {
+    event: 'Notification',
+    matcher: undefined,
+    command: `EVENT_TYPE=session.activity ${SCRIPT_DEST}`,
+    label: 'Notification: lifecycle-logger (session.activity)',
   },
   {
     event: 'PreToolUse',
@@ -83,8 +106,17 @@ function installSymlink(): void {
     console.log(`✓ symlink: ${SCRIPT_DEST} → ${SCRIPT_SRC}`);
   }
 
-  // Ensure executable
   chmodSync(SCRIPT_SRC, 0o755);
+}
+
+/**
+ * 해당 이벤트의 groups에서 lifecycle-logger.sh를 포함하는 그룹을 제거한다.
+ * v1 → v2 migration 시 구 command를 정리하는 데 사용.
+ */
+function removeLifecycleGroups(groups: HookGroup[]): HookGroup[] {
+  return groups.filter(
+    (group) => !group.hooks.some((h) => h.command.includes('lifecycle-logger.sh')),
+  );
 }
 
 function mergeHooks(): void {
@@ -106,21 +138,28 @@ function mergeHooks(): void {
   }
 
   const added: string[] = [];
+  const migrated: string[] = [];
 
   for (const hookDef of LIFECYCLE_HOOKS) {
-    const groups: HookGroup[] = settings.hooks[hookDef.event] ?? [];
+    let groups: HookGroup[] = settings.hooks[hookDef.event] ?? [];
 
-    // Check if already registered (by command string)
+    // 이미 정확한 v2 command가 등록되어 있으면 skip
     const alreadyRegistered = groups.some((group) =>
       group.hooks.some((h) => h.command === hookDef.command),
     );
-
     if (alreadyRegistered) {
       console.log(`  (skip) already registered: ${hookDef.label}`);
       continue;
     }
 
-    // Add new hook group
+    // v1 lifecycle-logger 그룹 제거 (migration)
+    const cleaned = removeLifecycleGroups(groups);
+    if (cleaned.length < groups.length) {
+      migrated.push(hookDef.event);
+      groups = cleaned;
+    }
+
+    // 새 hook group 추가
     const newGroup: HookGroup = {
       hooks: [{ type: 'command', command: hookDef.command }],
     };
@@ -135,6 +174,9 @@ function mergeHooks(): void {
 
   writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2) + '\n');
 
+  if (migrated.length > 0) {
+    console.log(`  migrated old lifecycle hooks: ${migrated.join(', ')}`);
+  }
   if (added.length > 0) {
     console.log(`✓ hooks merged into ${SETTINGS_PATH}`);
     for (const label of added) {

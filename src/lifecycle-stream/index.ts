@@ -1,8 +1,13 @@
 export type {
+  // v1
   SessionLifecyclePhase,
   SkillLifecyclePhase,
   SessionLifecycleEvent,
   SkillLifecycleEvent,
+  // v2
+  TurnEndEvent,
+  TurnStartEvent,
+  // union
   LifecycleEvent,
 } from './types.ts';
 

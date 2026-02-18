@@ -1,5 +1,11 @@
 import { openSync, readSync, statSync, closeSync, existsSync } from 'node:fs';
-import type { LifecycleEvent, SessionLifecycleEvent, SkillLifecycleEvent } from './types.ts';
+import type {
+  LifecycleEvent,
+  SessionLifecycleEvent,
+  SkillLifecycleEvent,
+  TurnEndEvent,
+  TurnStartEvent,
+} from './types.ts';
 import type { LifecycleStore } from './store.ts';
 
 const HOME = process.env.HOME ?? '';
@@ -13,13 +19,13 @@ const READ_CHUNK_SIZE = 65536; // 64 KB per read
 function parseEvent(line: string): LifecycleEvent | null {
   try {
     const obj = JSON.parse(line) as Record<string, unknown>;
-    if (obj['eventType'] === 'session.lifecycle') {
-      return obj as unknown as SessionLifecycleEvent;
+    switch (obj['eventType']) {
+      case 'session.lifecycle': return obj as unknown as SessionLifecycleEvent;
+      case 'skill.lifecycle':   return obj as unknown as SkillLifecycleEvent;
+      case 'turn.end':          return obj as unknown as TurnEndEvent;
+      case 'turn.start':        return obj as unknown as TurnStartEvent;
+      default:                  return null;
     }
-    if (obj['eventType'] === 'skill.lifecycle') {
-      return obj as unknown as SkillLifecycleEvent;
-    }
-    return null;
   } catch {
     return null;
   }
@@ -81,7 +87,6 @@ export class FileStreamConsumer {
       let byteOffset = 0;
       if (saved) {
         if (saved.inode !== currentInode) {
-          // File was rotated — restart from 0
           console.log('[lifecycle-stream] file rotation detected, resetting offset');
           byteOffset = 0;
         } else {
@@ -91,17 +96,13 @@ export class FileStreamConsumer {
 
       if (byteOffset >= fileSize) return;
 
-      // Read new data
       const readSize = Math.min(fileSize - byteOffset, READ_CHUNK_SIZE);
       const buf = Buffer.allocUnsafe(readSize);
       const bytesRead = readSync(fd, buf, 0, readSize, byteOffset);
       if (bytesRead === 0) return;
 
       const chunk = buf.subarray(0, bytesRead).toString('utf-8');
-
-      // Split into lines; last partial line (no newline at end) is skipped
       const lines = chunk.split('\n');
-      // If chunk doesn't end with newline, the last "line" is incomplete
       const hasTrailingNewline = chunk.endsWith('\n');
       const completeLines = hasTrailingNewline ? lines.slice(0, -1) : lines.slice(0, -1);
 
@@ -115,27 +116,17 @@ export class FileStreamConsumer {
 
         const event = parseEvent(trimmed);
         if (!event) {
-          // Invalid JSON — skip line, advance offset past it
           processedBytes += Buffer.byteLength(line + '\n', 'utf-8');
           continue;
         }
 
-        // Insert — if it fails we don't advance the offset
-        let inserted: boolean;
         try {
-          if (event.eventType === 'session.lifecycle') {
-            inserted = this.store.insertSessionEvent(event);
-          } else {
-            inserted = this.store.insertSkillEvent(event);
-          }
+          this.dispatchEvent(event);
         } catch (err) {
           console.error('[lifecycle-stream] DB insert failed, will retry:', err);
-          // Stop processing here; retry next poll from current processedBytes
           break;
         }
 
-        // INSERT OR IGNORE — treat both insert and duplicate as "consumed"
-        void inserted; // suppress unused warning
         processedBytes += Buffer.byteLength(line + '\n', 'utf-8');
       }
 
@@ -144,6 +135,24 @@ export class FileStreamConsumer {
       }
     } finally {
       closeSync(fd);
+    }
+  }
+
+  // ── Event dispatch ────────────────────────────────────────────────────
+
+  private dispatchEvent(event: LifecycleEvent): void {
+    switch (event.eventType) {
+      case 'session.lifecycle':
+        this.store.insertSessionEvent(event);
+        break;
+      case 'skill.lifecycle':
+        this.store.insertSkillEvent(event);
+        break;
+      case 'turn.end':
+      case 'turn.start':
+        // audit DB에는 저장하지 않음.
+        // LifecycleSessionMonitor가 JSONL을 직접 구독하여 in-memory 상태로 관리할 예정.
+        break;
     }
   }
 }

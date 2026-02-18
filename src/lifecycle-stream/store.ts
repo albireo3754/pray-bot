@@ -56,8 +56,8 @@ export class LifecycleStore {
   constructor(dbPath: string = DEFAULT_DB_PATH) {
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath);
-    this.db.exec('PRAGMA journal_mode=WAL');
-    this.db.exec(SCHEMA);
+    this.db.run('PRAGMA journal_mode=WAL');
+    this.db.run(SCHEMA);
   }
 
   // ── Session events ─────────────────────────────────────────────────────

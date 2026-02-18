@@ -294,7 +294,64 @@ claude --dangerously-skip-permissions -p "snowflake 스킬 1 테스트"
 6. 기존 monitor API에 세션/스킬 상태 read-only 노출
 7. 1~2일 운영 후 누락/지연 확인
 
-## 11. Open Decisions (해결됨)
+## 11. Phase 3: LifecycleSessionMonitor
+
+> status: 미구현 — Phase 2 완료 후 진행
+
+### 목표
+
+`ClaudeSessionMonitor`(process polling + JSONL fswatch)를 lifecycle-stream 기반으로 대체.
+`SessionMonitorProvider` 인터페이스를 구현하는 `LifecycleSessionMonitor` 추가.
+
+### 설계
+
+```
+lifecycle.jsonl ──┬── FileStreamConsumer → SQLite (audit)
+                  └── LifecycleSessionMonitor → in-memory Map<sessionId, SessionSnapshot>
+```
+
+두 컨슈머가 **동일 JSONL을 독립 offset으로** 구독. DB 읽기 불필요.
+
+### 상태 머신
+
+| 이벤트 | 상태 변화 |
+|--------|-----------|
+| `session.lifecycle started` | snapshot 생성, state=`active`, activityPhase=`busy` |
+| `turn.start` | lastUserMessage=prompt, activityPhase=`busy` |
+| `turn.end` + tailJsonl(transcriptPath) | model/tokens/turnCount/gitBranch 갱신, activityPhase=`interactable` |
+| `session.lifecycle waiting_permission` | activityPhase=`waiting_permission` |
+| `session.lifecycle waiting_question` | activityPhase=`waiting_question` |
+| `skill.lifecycle in_progress` | currentSkill 세팅 |
+| `skill.lifecycle completed` | currentSkill 클리어 |
+| `session.lifecycle ended` | state=`completed` |
+| 5분 무활동 타이머 | state=`idle` |
+
+### turn.end enrichment (TurnRichData)
+
+`turn.end` 이벤트의 `transcriptPath`를 `tailJsonl` + `extractSessionInfo`로 읽어
+`SessionSnapshot`에 반영. DB 저장 없이 in-memory에만 유지.
+
+```ts
+type TurnRichData = {
+  model: string | null;
+  tokens: { input: number; output: number; cached: number };
+  turnCount: number;
+  gitBranch: string | null;
+};
+```
+
+### 재시작 복구
+
+시작 시 `lifecycle.jsonl` offset=0부터 replay → 현재 상태 복원.
+24시간 이전 `session.lifecycle ended` 세션은 skip.
+
+### 미지원 항목 (ClaudeSessionMonitor 대비)
+
+- `pid`, `cpuPercent`, `memMb` — process polling 없음. 필요 시 경량 폴러 병행.
+
+---
+
+## 12. Open Decisions (해결됨)
 
 | 결정 사항 | 결론 |
 |-----------|------|
