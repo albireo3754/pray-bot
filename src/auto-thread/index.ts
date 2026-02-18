@@ -402,6 +402,33 @@ export class AutoThreadDiscovery {
   }
 
   /**
+   * SessionStart hook 수신 시, cwd가 일치하는 비어있는 discord route에
+   * providerSessionId를 선점 등록한다.
+   *
+   * /claude 명령으로 생성된 route는 Claude stdout 파싱 전까지 providerSessionId=''
+   * 상태이므로, hook 도착 시점에 isAlreadyMapped가 매칭 실패하는 타이밍 갭을 메운다.
+   *
+   * @returns 선점 성공 여부 (true = 기존 discord route에 등록됨)
+   */
+  private claimRouteBySessionId(sessionId: string, cwd: string, provider: AutoThreadProvider): boolean {
+    const normalizedCwd = cwd.trim();
+    if (!normalizedCwd) return false;
+
+    for (const route of this.getThreadRoutes().values()) {
+      if (
+        route.provider === provider
+        && !route.autoDiscovered
+        && !route.providerSessionId
+        && route.cwd === normalizedCwd
+      ) {
+        route.providerSessionId = sessionId;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
    * SessionStart hook에서 즉시 thread 생성.
    * 기존 onMonitorRefresh() 기반 발견의 즉시 버전.
    */
@@ -410,6 +437,12 @@ export class AutoThreadDiscovery {
     if (this.isExcludedSnapshot(snapshot)) return;
 
     const provider = snapshotProvider(snapshot);
+
+    // cwd 기반으로 비어있는 discord route에 session_id 선점 등록.
+    // SessionStart hook은 stdout보다 먼저 오므로 route.providerSessionId=''인 상태.
+    // 선점 후 isAlreadyMapped가 정상 매칭되어 auto-thread 중복 생성을 방지한다.
+    this.claimRouteBySessionId(snapshot.sessionId, snapshot.projectPath, provider);
+
     if (this.isAlreadyMapped(snapshot.sessionId, provider)) return;
 
     try {
