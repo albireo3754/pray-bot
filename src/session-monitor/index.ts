@@ -47,6 +47,8 @@ export class SessionMonitor implements SessionMonitorProvider {
   private sessionsByProvider = new Map<string, SessionSnapshot[]>();
   private onRefreshCallbacks: Array<(sessions: SessionSnapshot[]) => Promise<void>> = [];
   private lastRefresh = new Date();
+  private emitRunning = false;
+  private emitQueued = false;
 
   /** 프로바이더 등록 (init 전에 호출) */
   addProvider(name: string, provider: SessionMonitorProvider): void {
@@ -58,7 +60,7 @@ export class SessionMonitor implements SessionMonitorProvider {
     for (const [name, provider] of this.providers) {
       provider.onRefresh(async (sessions) => {
         this.sessionsByProvider.set(name, sessions);
-        await this.emitMerged();
+        await this.enqueueEmitMerged();
       });
       await provider.init();
     }
@@ -95,7 +97,27 @@ export class SessionMonitor implements SessionMonitorProvider {
       });
   }
 
-  private async emitMerged(): Promise<void> {
+  private async enqueueEmitMerged(): Promise<void> {
+    if (this.emitRunning) {
+      if (!this.emitQueued) {
+        console.log('[SessionMonitor] merge requested while running; queueing one extra pass');
+      }
+      this.emitQueued = true;
+      return;
+    }
+
+    this.emitRunning = true;
+    try {
+      do {
+        this.emitQueued = false;
+        await this.emitMergedOnce();
+      } while (this.emitQueued);
+    } finally {
+      this.emitRunning = false;
+    }
+  }
+
+  private async emitMergedOnce(): Promise<void> {
     this.lastRefresh = new Date();
     const sessions = this.mergeSessions();
     for (const cb of this.onRefreshCallbacks) {

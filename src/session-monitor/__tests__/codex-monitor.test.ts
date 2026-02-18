@@ -177,4 +177,42 @@ describe('CodexSessionMonitor', () => {
     expect(monitor.getSession('stale-session')?.state).toBe('stale');
     expect(monitor.getStatus().totalCount).toBe(2);
   });
+
+  test('serializes overlapping refresh calls into a single queued extra pass', async () => {
+    const monitor = new CodexSessionMonitor({
+      sessionsRoot: '/tmp/does-not-matter',
+      scanDays: 1,
+      pollIntervalMs: 60_000,
+    });
+
+    let discoverCalls = 0;
+    let running = 0;
+    let maxRunning = 0;
+
+    (monitor as any).discoverSessions = async () => {
+      discoverCalls += 1;
+      running += 1;
+      maxRunning = Math.max(maxRunning, running);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      running -= 1;
+      return [];
+    };
+
+    let refreshCallbackCalls = 0;
+    monitor.onRefresh(async () => {
+      refreshCallbackCalls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+
+    await Promise.all([
+      monitor.refresh(),
+      monitor.refresh(),
+      monitor.refresh(),
+    ]);
+
+    // 3 concurrent requests -> 1 in-flight + 1 queued pass
+    expect(discoverCalls).toBe(2);
+    expect(refreshCallbackCalls).toBe(2);
+    expect(maxRunning).toBe(1);
+  });
 });

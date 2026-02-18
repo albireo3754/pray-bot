@@ -171,6 +171,41 @@ describe('SessionMonitor', () => {
     expect(received[1]?.length).toBe(2);
   });
 
+  test('serializes overlapping provider refresh events', async () => {
+    const claude = new MockProvider('claude');
+    const codex = new MockProvider('codex');
+
+    const monitor = new SessionMonitor();
+    monitor.addProvider('claude', claude);
+    monitor.addProvider('codex', codex);
+    await monitor.init();
+
+    let callbackCalls = 0;
+    let running = 0;
+    let maxRunning = 0;
+    monitor.onRefresh(async () => {
+      callbackCalls += 1;
+      running += 1;
+      maxRunning = Math.max(maxRunning, running);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      running -= 1;
+    });
+
+    const now = new Date();
+    await Promise.all([
+      claude.emitRefresh([
+        makeSnapshot({ provider: 'claude', sessionId: 'claude-overlap', state: 'active', lastActivity: now }),
+      ]),
+      codex.emitRefresh([
+        makeSnapshot({ provider: 'codex', sessionId: 'codex-overlap', state: 'active', lastActivity: now }),
+      ]),
+    ]);
+
+    // provider 2개의 refresh를 처리하되, 콜백 실행은 겹치지 않아야 한다.
+    expect(callbackCalls).toBe(2);
+    expect(maxRunning).toBe(1);
+  });
+
   test('getTokenUsageReport merges reports from all providers', async () => {
     const claude = new MockProvider('claude');
     const codex = new MockProvider('codex');

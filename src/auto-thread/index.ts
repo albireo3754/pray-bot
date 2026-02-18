@@ -23,6 +23,11 @@ type DiscordThreadRoute = {
 };
 
 type AutoThreadProvider = 'claude' | 'codex';
+type ExistingMapping = {
+  source: 'discovered' | 'route';
+  threadId: string;
+  mappingKey: string;
+};
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -149,6 +154,12 @@ export class AutoThreadDiscovery {
         && !this.isExcludedSnapshot(snapshot)
         && !this.isAlreadyMapped(snapshot.sessionId, provider);
     });
+    if (newSessions.length > 0) {
+      const summary = newSessions
+        .map((snapshot) => `${snapshotProvider(snapshot)}:${snapshot.sessionId.slice(0, 8)}`)
+        .join(',');
+      console.log(`[AutoThread] refresh newSessions=${newSessions.length} candidates=${summary}`);
+    }
 
     for (const snapshot of newSessions) {
       try {
@@ -187,15 +198,7 @@ export class AutoThreadDiscovery {
   }
 
   isAlreadyMapped(sessionId: string, provider: AutoThreadProvider = 'claude'): boolean {
-    if (this.discoveredMap.has(buildSessionKey(provider, sessionId))) return true;
-
-    for (const route of this.getThreadRoutes().values()) {
-      if (route.provider === provider && route.providerSessionId === sessionId) {
-        return true;
-      }
-    }
-
-    return false;
+    return this.findExistingMapping(sessionId, provider) !== null;
   }
 
   private async createThreadForSession(snapshot: SessionSnapshot): Promise<DiscoveredThread | null> {
@@ -203,10 +206,20 @@ export class AutoThreadDiscovery {
     const key = buildSnapshotKey(snapshot);
 
     // Guard: prevent concurrent creation for the same session
-    if (this.pendingCreations.has(key)) return null;
+    if (this.pendingCreations.has(key)) {
+      console.log(
+        `[AutoThread][dedupe] skip pending provider=${provider} session=${snapshot.sessionId} cwd=${snapshot.projectPath}`,
+      );
+      return null;
+    }
 
     const routeMap = this.getThreadRoutes();
-    if (this.isAlreadyMapped(snapshot.sessionId, provider)) {
+    const existing = this.findExistingMapping(snapshot.sessionId, provider);
+    if (existing) {
+      console.log(
+        `[AutoThread][dedupe] skip mapped provider=${provider} session=${snapshot.sessionId} ` +
+          `source=${existing.source} thread=${existing.threadId} mapping=${existing.mappingKey} cwd=${snapshot.projectPath}`,
+      );
       return null;
     }
 
@@ -422,6 +435,10 @@ export class AutoThreadDiscovery {
         && route.cwd === normalizedCwd
       ) {
         route.providerSessionId = sessionId;
+        console.log(
+          `[AutoThread][claim] provider=${provider} session=${sessionId} thread=${route.threadId} ` +
+            `mapping=${route.mappingKey} cwd=${normalizedCwd}`,
+        );
         return true;
       }
     }
@@ -443,7 +460,14 @@ export class AutoThreadDiscovery {
     // 선점 후 isAlreadyMapped가 정상 매칭되어 auto-thread 중복 생성을 방지한다.
     this.claimRouteBySessionId(snapshot.sessionId, snapshot.projectPath, provider);
 
-    if (this.isAlreadyMapped(snapshot.sessionId, provider)) return;
+    const existing = this.findExistingMapping(snapshot.sessionId, provider);
+    if (existing) {
+      console.log(
+        `[AutoThread][onSessionStart] skip mapped provider=${provider} session=${snapshot.sessionId} ` +
+          `source=${existing.source} thread=${existing.threadId} mapping=${existing.mappingKey}`,
+      );
+      return;
+    }
 
     try {
       const created = await this.createThreadForSession(snapshot);
@@ -492,6 +516,29 @@ export class AutoThreadDiscovery {
       if (path === prefix || path.startsWith(`${prefix}/`)) return true;
     }
     return false;
+  }
+
+  private findExistingMapping(sessionId: string, provider: AutoThreadProvider): ExistingMapping | null {
+    const discovered = this.discoveredMap.get(buildSessionKey(provider, sessionId));
+    if (discovered) {
+      return {
+        source: 'discovered',
+        threadId: discovered.threadId,
+        mappingKey: discovered.mappingKey,
+      };
+    }
+
+    for (const route of this.getThreadRoutes().values()) {
+      if (route.provider === provider && route.providerSessionId === sessionId) {
+        return {
+          source: 'route',
+          threadId: route.threadId,
+          mappingKey: route.mappingKey,
+        };
+      }
+    }
+
+    return null;
   }
 }
 

@@ -259,6 +259,8 @@ export class CodexSessionMonitor implements SessionMonitorProvider {
   private timer: Timer | null = null;
   private lastRefresh = new Date();
   private onRefreshCallbacks: Array<(sessions: SessionSnapshot[]) => Promise<void>> = [];
+  private refreshRunning = false;
+  private refreshQueued = false;
   private readonly pollIntervalMs: number;
   private readonly scanDays: number;
   private readonly sessionsRoot: string;
@@ -287,6 +289,26 @@ export class CodexSessionMonitor implements SessionMonitorProvider {
   }
 
   async refresh(): Promise<void> {
+    if (this.refreshRunning) {
+      if (!this.refreshQueued) {
+        console.log('[CodexMonitor] refresh requested while running; queueing one extra pass');
+      }
+      this.refreshQueued = true;
+      return;
+    }
+
+    this.refreshRunning = true;
+    try {
+      do {
+        this.refreshQueued = false;
+        await this.refreshOnce();
+      } while (this.refreshQueued);
+    } finally {
+      this.refreshRunning = false;
+    }
+  }
+
+  private async refreshOnce(): Promise<void> {
     try {
       const snapshots = await this.discoverSessions();
       this.sessions.clear();
