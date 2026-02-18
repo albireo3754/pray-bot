@@ -69,6 +69,8 @@ function buildThreadName(snapshot: SessionSnapshot): string {
 export class AutoThreadDiscovery {
   /** provider:sessionId -> DiscoveredThread */
   private discoveredMap = new Map<string, DiscoveredThread>();
+  /** Guard against concurrent createThreadForSession for same session */
+  private pendingCreations = new Set<string>();
   /** provider:sessionId set from previous refresh */
   private knownSessionIds = new Set<string>();
   /** provider:sessionId -> state */
@@ -198,90 +200,100 @@ export class AutoThreadDiscovery {
 
   private async createThreadForSession(snapshot: SessionSnapshot): Promise<DiscoveredThread | null> {
     const provider = snapshotProvider(snapshot);
+    const key = buildSnapshotKey(snapshot);
+
+    // Guard: prevent concurrent creation for the same session
+    if (this.pendingCreations.has(key)) return null;
+
     const routeMap = this.getThreadRoutes();
     if (this.isAlreadyMapped(snapshot.sessionId, provider)) {
       return null;
     }
 
-    const mapping = resolveMappingForSession(
-      { projectPath: snapshot.projectPath, projectName: snapshot.projectName },
-      this.channelRegistry,
-    );
-    const parentChannelId = mapping?.channelId ?? this.config.fallbackChannelId;
-    if (!parentChannelId) {
-      console.log(`[AutoThread] skip no channel mapping: ${snapshot.projectPath}`);
-      return null;
-    }
+    this.pendingCreations.add(key);
+    try {
+      const mapping = resolveMappingForSession(
+        { projectPath: snapshot.projectPath, projectName: snapshot.projectName },
+        this.channelRegistry,
+      );
+      const parentChannelId = mapping?.channelId ?? this.config.fallbackChannelId;
+      if (!parentChannelId) {
+        console.log(`[AutoThread] skip no channel mapping: ${snapshot.projectPath}`);
+        return null;
+      }
 
-    const threadName = buildThreadName(snapshot);
-    const threadId = await this.discordClient.createThread(parentChannelId, threadName);
-    this.discordClient.addAllowedChannel(threadId);
+      const threadName = buildThreadName(snapshot);
+      const threadId = await this.discordClient.createThread(parentChannelId, threadName);
+      this.discordClient.addAllowedChannel(threadId);
 
-    // Extract worktree metadata
-    const worktreeInfo = extractOriginalProjectFromWorktree(snapshot.projectPath);
-    let worktreeMetadata: DiscoveredThread['worktree'] | undefined;
-    if (worktreeInfo) {
-      worktreeMetadata = {
-        originalProject: worktreeInfo.originalName,
-        worktreeName: worktreeInfo.worktreeName,
-      };
+      // Extract worktree metadata
+      const worktreeInfo = extractOriginalProjectFromWorktree(snapshot.projectPath);
+      let worktreeMetadata: DiscoveredThread['worktree'] | undefined;
+      if (worktreeInfo) {
+        worktreeMetadata = {
+          originalProject: worktreeInfo.originalName,
+          worktreeName: worktreeInfo.worktreeName,
+        };
 
-      // Try to extract Task from CLAUDE.md
-      try {
-        const claudeMdPath = `${snapshot.projectPath}/CLAUDE.md`;
-        const file = Bun.file(claudeMdPath);
-        if (await file.exists()) {
-          const content = await file.text();
-          const taskMatch = content.match(/^## Task\s*\n([\s\S]*?)(?=\n##|\n---|\Z)/im);
-          if (taskMatch) {
-            const taskContent = taskMatch[1];
-            if (taskContent) {
-              worktreeMetadata.task = taskContent.trim();
+        // Try to extract Task from CLAUDE.md
+        try {
+          const claudeMdPath = `${snapshot.projectPath}/CLAUDE.md`;
+          const file = Bun.file(claudeMdPath);
+          if (await file.exists()) {
+            const content = await file.text();
+            const taskMatch = content.match(/^## Task\s*\n([\s\S]*?)(?=\n##|\n---|\Z)/im);
+            if (taskMatch) {
+              const taskContent = taskMatch[1];
+              if (taskContent) {
+                worktreeMetadata.task = taskContent.trim();
+              }
             }
           }
+        } catch (error) {
+          // Graceful failure — worktree metadata is still valid without task
+          console.warn(`[AutoThread] failed to extract task from CLAUDE.md: ${error}`);
         }
-      } catch (error) {
-        // Graceful failure — worktree metadata is still valid without task
-        console.warn(`[AutoThread] failed to extract task from CLAUDE.md: ${error}`);
       }
+
+      const discovered: DiscoveredThread = {
+        sessionId: snapshot.sessionId,
+        threadId,
+        parentChannelId,
+        mappingKey: mapping?.key ?? 'fallback',
+        provider,
+        cwd: snapshot.projectPath,
+        model: snapshot.model,
+        slug: snapshot.slug,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        autoDiscovered: true,
+        worktree: worktreeMetadata,
+      };
+
+      const route: DiscordThreadRoute = {
+        threadId,
+        parentChannelId,
+        mappingKey: discovered.mappingKey,
+        provider,
+        providerSessionId: snapshot.sessionId,
+        cwd: snapshot.projectPath,
+        createdAt: discovered.createdAt,
+        updatedAt: discovered.updatedAt,
+        autoDiscovered: true,
+      };
+      routeMap.set(threadId, route);
+
+      if (this.config.sendInitialEmbed) {
+        await this.discordClient.sendEmbed(threadId, formatInitialEmbed(snapshot, worktreeMetadata?.task));
+      }
+
+      console.log(
+        `[AutoThread] discovered provider=${provider} session=${snapshot.sessionId} thread=${threadId}`,
+      );
+      return discovered;
+    } finally {
+      this.pendingCreations.delete(key);
     }
-
-    const discovered: DiscoveredThread = {
-      sessionId: snapshot.sessionId,
-      threadId,
-      parentChannelId,
-      mappingKey: mapping?.key ?? 'fallback',
-      provider,
-      cwd: snapshot.projectPath,
-      model: snapshot.model,
-      slug: snapshot.slug,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      autoDiscovered: true,
-      worktree: worktreeMetadata,
-    };
-
-    const route: DiscordThreadRoute = {
-      threadId,
-      parentChannelId,
-      mappingKey: discovered.mappingKey,
-      provider,
-      providerSessionId: snapshot.sessionId,
-      cwd: snapshot.projectPath,
-      createdAt: discovered.createdAt,
-      updatedAt: discovered.updatedAt,
-      autoDiscovered: true,
-    };
-    routeMap.set(threadId, route);
-
-    if (this.config.sendInitialEmbed) {
-      await this.discordClient.sendEmbed(threadId, formatInitialEmbed(snapshot, worktreeMetadata?.task));
-    }
-
-    console.log(
-      `[AutoThread] discovered provider=${provider} session=${snapshot.sessionId} thread=${threadId}`,
-    );
-    return discovered;
   }
 
   private async save(): Promise<void> {
@@ -386,6 +398,50 @@ export class AutoThreadDiscovery {
 
     if (stateUpdated) {
       await this.saveMonitorState();
+    }
+  }
+
+  /**
+   * SessionStart hook에서 즉시 thread 생성.
+   * 기존 onMonitorRefresh() 기반 발견의 즉시 버전.
+   */
+  async onSessionStart(snapshot: SessionSnapshot): Promise<void> {
+    if (!this.config.enabled) return;
+    if (this.isExcludedSnapshot(snapshot)) return;
+
+    const provider = snapshotProvider(snapshot);
+    if (this.isAlreadyMapped(snapshot.sessionId, provider)) return;
+
+    try {
+      const created = await this.createThreadForSession(snapshot);
+      if (created) {
+        this.discoveredMap.set(buildDiscoveredKey(created), created);
+        await this.save();
+      }
+    } catch (error) {
+      console.error(`[AutoThread] onSessionStart create thread failed: ${snapshot.sessionId}`, error);
+    }
+  }
+
+  /**
+   * 세션의 Discord thread에 메시지 전송.
+   * discoveredMap에서 buildSessionKey(provider, sessionId)로 thread 조회 →
+   * discordClient.sendMessage().
+   *
+   * @returns true = 전송 성공, false = thread 미존재 또는 Discord API 실패
+   */
+  async sendToSessionThread(provider: string, sessionId: string, message: string): Promise<boolean> {
+    const p: AutoThreadProvider = provider === 'codex' ? 'codex' : 'claude';
+    const key = buildSessionKey(p, sessionId);
+    const discovered = this.discoveredMap.get(key);
+    if (!discovered) return false;
+
+    try {
+      await this.discordClient.sendMessage(discovered.threadId, message);
+      return true;
+    } catch (error) {
+      console.error(`[AutoThread] sendToSessionThread failed: ${key}`, error);
+      return false;
     }
   }
 
