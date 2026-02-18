@@ -243,6 +243,11 @@ export function buildSlashCommands(): RESTPostAPIChatInputApplicationCommandsJSO
           .setDescription('true면 실제 삭제, false면 미리보기')
           .setRequired(false),
       ),
+
+    // /session-id - 현재 스레드의 세션 ID 조회
+    new SlashCommandBuilder()
+      .setName('session-id')
+      .setDescription('현재 스레드의 세션 ID 조회'),
   ];
   return commands.map((cmd) => cmd.toJSON());
 }
@@ -394,6 +399,7 @@ function createInteractionReplyClient(interaction: ChatInputCommandInteraction):
 function interactionToMessagePayload(interaction: ChatInputCommandInteraction): Record<string, unknown> & { text: string } {
   return {
     id: interaction.id,
+    channelId: interaction.channelId,
     user: {
       id: Number(interaction.user.id) || 0,
       name: interaction.user.username,

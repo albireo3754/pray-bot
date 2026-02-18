@@ -1,6 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import type { CommandDefinition } from '../command/registry.ts';
 
 export type PersistedDiscordThreadRoute = {
   threadId: string;
@@ -193,6 +194,28 @@ export function getDiscordThreadRoute(threadId: string): PersistedDiscordThreadR
   const row = findByThreadStmt.get({ $threadId: threadId }) as RouteRow | null;
   if (!row) return null;
   return toPersistedRoute(row);
+}
+
+export function createSessionIdCommand(): CommandDefinition {
+  return {
+    name: '/session-id',
+    description: '현재 스레드의 세션 ID 조회',
+    execute: async (ctx) => {
+      const threadId = ctx.data['channelId'] as string | undefined;
+      if (!threadId) {
+        ctx.client.sendMessage('채널 ID를 확인할 수 없습니다.');
+        return;
+      }
+      const route = getDiscordThreadRoute(threadId);
+      if (!route || !route.providerSessionId) {
+        ctx.client.sendMessage('이 스레드에 연결된 세션을 찾을 수 없습니다.');
+        return;
+      }
+      ctx.client.sendMessage(
+        `**Session ID** (\`${route.provider}\`)\n\`\`\`\n${route.providerSessionId}\n\`\`\``,
+      );
+    },
+  };
 }
 
 export function getLatestDiscordThreadRouteByParentProvider(
