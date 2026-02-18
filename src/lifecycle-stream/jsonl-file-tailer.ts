@@ -1,14 +1,100 @@
 import { openSync, readSync, statSync, closeSync, existsSync, writeFileSync, readFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { LifecycleEvent } from './types.ts';
+import type { LifecycleEvent, SessionLifecyclePhase, SkillLifecyclePhase } from './types.ts';
 
 const READ_CHUNK_SIZE = 65536; // 64 KB per read
+
+// ── Raw hook transformer ───────────────────────────────────────────────────
+// lifecycle-logger.sh writes raw Claude Code hook payloads with hookType injected.
+// This converts them into typed LifecycleEvents.
+
+const DOC_SKILLS = new Set(['spec', 'spec-review', 'lite-spec']);
+const SESSION_PHASES = new Set<string>(['started', 'ended', 'waiting_permission', 'waiting_question']);
+const SKILL_PHASES = new Set<string>(['in_progress', 'completed']);
+
+function transformRawHook(obj: Record<string, unknown>): LifecycleEvent | null {
+  const hookType = typeof obj['hookType'] === 'string' ? obj['hookType'] : '';
+  const sessionId = typeof obj['session_id'] === 'string' ? obj['session_id'] : 'unknown';
+  const projectPath = typeof obj['cwd'] === 'string' ? obj['cwd'] : null;
+  const occurredAtIso = typeof obj['occurredAtIso'] === 'string'
+    ? obj['occurredAtIso']
+    : new Date().toISOString();
+  const id = crypto.randomUUID();
+
+  switch (hookType) {
+    case 'session.lifecycle': {
+      const phase = typeof obj['phase'] === 'string' ? obj['phase'] : '';
+      if (!SESSION_PHASES.has(phase)) return null;
+      return {
+        id, eventType: 'session.lifecycle',
+        phase: phase as SessionLifecyclePhase,
+        occurredAtIso, sessionId, provider: 'claude',
+        projectPath, cwd: projectPath,
+      };
+    }
+
+    case 'session.activity': {
+      const notifType = typeof obj['notification_type'] === 'string' ? obj['notification_type'] : '';
+      let phase: SessionLifecyclePhase;
+      if (notifType === 'permission_prompt') phase = 'waiting_permission';
+      else if (notifType === 'idle_prompt' || notifType === 'elicitation_dialog') phase = 'waiting_question';
+      else return null;
+      return {
+        id, eventType: 'session.lifecycle',
+        phase, occurredAtIso, sessionId, provider: 'claude',
+        projectPath, cwd: projectPath,
+      };
+    }
+
+    case 'skill.lifecycle': {
+      const phase = typeof obj['phase'] === 'string' ? obj['phase'] : '';
+      if (!SKILL_PHASES.has(phase)) return null;
+      const toolInput = obj['tool_input'] !== null && typeof obj['tool_input'] === 'object'
+        ? obj['tool_input'] as Record<string, unknown>
+        : {};
+      const rawSkillName = typeof toolInput['skill'] === 'string' ? toolInput['skill'] : null;
+      const skillArgs = typeof toolInput['args'] === 'string' ? toolInput['args'] : null;
+      if (!rawSkillName) return null;
+      const skillName = rawSkillName.replace(/^\//, '');
+      const triggerCommand = `/${skillName}` + (skillArgs ? ` ${skillArgs}` : '');
+      const firstArg = skillArgs?.trim().split(/\s+/)[0] ?? null;
+      const targetDocPath = DOC_SKILLS.has(skillName) ? firstArg : null;
+      return {
+        id, eventType: 'skill.lifecycle',
+        phase: phase as SkillLifecyclePhase,
+        occurredAtIso, sessionId, provider: 'claude',
+        projectPath, skillName, triggerCommand,
+        turnSeq: null, targetDocPath,
+      };
+    }
+
+    case 'turn.end': {
+      const transcriptPath = typeof obj['transcript_path'] === 'string' ? obj['transcript_path'] : null;
+      return { id, eventType: 'turn.end', occurredAtIso, sessionId, provider: 'claude', projectPath, transcriptPath };
+    }
+
+    case 'turn.start': {
+      const prompt = typeof obj['prompt'] === 'string' ? obj['prompt'] : null;
+      return { id, eventType: 'turn.start', occurredAtIso, sessionId, provider: 'claude', projectPath, prompt };
+    }
+
+    default:
+      return null;
+  }
+}
 
 // ── Parser ────────────────────────────────────────────────────────────────
 
 function parseEvent(line: string): LifecycleEvent | null {
   try {
     const obj = JSON.parse(line) as Record<string, unknown>;
+
+    // New format: raw hook payload written by lifecycle-logger.sh
+    if (typeof obj['hookType'] === 'string') {
+      return transformRawHook(obj);
+    }
+
+    // Legacy format: pre-transformed event with eventType (backwards compat)
     switch (obj['eventType']) {
       case 'session.lifecycle': return obj as unknown as LifecycleEvent;
       case 'skill.lifecycle':   return obj as unknown as LifecycleEvent;

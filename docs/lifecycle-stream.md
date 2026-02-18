@@ -9,7 +9,7 @@
 
 Claude Code 세션 라이프사이클과 스킬 실행 라이프사이클을 추적하기 위해:
 
-1. Claude Code 훅(SessionStart / Stop / PreToolUse:Skill / PostToolUse:Skill)에서 이벤트를 JSONL로 append
+1. Claude Code 훅(SessionStart / SessionEnd / Stop / UserPromptSubmit / Notification / PreToolUse:Skill / PostToolUse:Skill)에서 이벤트를 JSONL로 append
 2. `pray-bot`이 해당 JSONL을 tail-read
 3. 세션/스킬 상태를 SQLite로 지속 저장
 4. 대시보드/모니터에서 세션별 최신 상태 조회 가능하게 한다.
@@ -17,7 +17,7 @@ Claude Code 세션 라이프사이클과 스킬 실행 라이프사이클을 추
 ## 2. Scope (Light)
 
 - 포함:
-  - Hook 이벤트 4종 정의 (SessionStart / Stop / PreToolUse:Skill / PostToolUse:Skill)
+  - Hook 이벤트 7종 정의 (SessionStart / SessionEnd / Stop / UserPromptSubmit / Notification / PreToolUse:Skill / PostToolUse:Skill)
   - JSONL 파일 포맷 정의 (session + skill 이벤트 혼재)
   - pray-bot 파일 스트림 consumer + DB 저장 설계
   - 최소 운영 안정성 (중복 방지, 재시작 복구, offset 저장)
@@ -32,11 +32,20 @@ Claude Code 세션 라이프사이클과 스킬 실행 라이프사이클을 추
 | Claude Code 훅 | matcher | 발동 빈도 | 생성 이벤트 |
 |----------------|---------|:---------:|------------|
 | `SessionStart` | 없음 | 세션당 1회 | `session.lifecycle` phase=`started` |
-| `Stop` | 없음 | 세션당 1회 | `session.lifecycle` phase=`ended` |
+| `SessionEnd` | 없음 | 세션당 1회 | `session.lifecycle` phase=`ended` |
+| `Stop` | 없음 | 매 턴 완료마다 | `turn.end` (transcript_path 포함) |
+| `UserPromptSubmit` | 없음 | 매 턴 시작마다 | `turn.start` (prompt 캡처) |
+| `Notification` | 없음 | 알림 발생마다 | `session.lifecycle` phase=`waiting_permission` \| `waiting_question` |
 | `PreToolUse` | `Skill` | 스킬 실행마다 | `skill.lifecycle` phase=`in_progress` |
 | `PostToolUse` | `Skill` | 스킬 실행마다 | `skill.lifecycle` phase=`completed` |
 
-**오버헤드**: SessionStart/Stop은 세션당 각 1회. Skill 훅은 세션당 5~15회 수준 — 체감 오버헤드 없음.
+> **주의**: `Stop` 훅은 세션 종료가 아니라 **매 턴(응답) 완료** 시 발동. 실제 세션 종료는 `SessionEnd`.
+
+**스킬 파라미터 추출**: `PreToolUse:Skill` stdin의 `tool_input.skill_name` (e.g. `"/spec"`), `tool_input.skill_args` (e.g. `"docs/abc.md"`)으로 스킬명과 인자를 확인 가능.
+
+**targetDocPath 추출**: `spec`, `spec-review`, `lite-spec` 스킬은 `skill_args` 첫 번째 토큰이 스펙 파일 경로 → `targetDocPath`로 저장.
+
+**오버헤드**: SessionStart/End는 세션당 각 1회. Stop/UserPromptSubmit은 턴 수만큼 (일반적 10~30회/세션). Skill 훅은 5~15회 — 체감 오버헤드 없음.
 
 ## 4. Event Model
 
@@ -63,10 +72,10 @@ export type SkillLifecycleEvent = {
   sessionId: string;
   provider: "claude" | "codex" | "unknown";
   projectPath: string | null;
-  skillName: string;      // e.g. "spec", "spec-review"
-  triggerCommand: string | null; // e.g. "/spec docs/x.md"
+  skillName: string;      // e.g. "spec", "spec-review" (leading "/" stripped)
+  triggerCommand: string | null; // e.g. "/spec docs/x.md" (skill_name + skill_args)
   turnSeq: number | null;
-  targetDocPath: string | null;
+  targetDocPath: string | null;  // spec/spec-review/lite-spec 스킬의 첫 번째 인자 (파일 경로)
 };
 
 export type LifecycleEvent = SessionLifecycleEvent | SkillLifecycleEvent;
@@ -101,23 +110,126 @@ src/lifecycle-stream/
 └── install-hooks.ts       # 훅 설치 스크립트
 ```
 
-### 6.2 lifecycle-logger.sh
+### 6.2 Hook stdin JSON 구조 (실측)
+
+Claude Code는 훅 스크립트에 컨텍스트를 **환경변수가 아닌 stdin JSON**으로 전달한다.
+환경변수로 제공되는 건 `CLAUDE_PROJECT_DIR` 하나뿐.
+
+**공통 필드 (모든 훅):**
+
+```json
+{
+  "session_id": "abc123",
+  "transcript_path": "/Users/.../.claude/projects/.../transcript.jsonl",
+  "cwd": "/Users/pray/work/js/pray-bot",
+  "permission_mode": "default",
+  "hook_event_name": "PreToolUse"
+}
+```
+
+**PreToolUse / PostToolUse (Skill 매처):**
+
+```json
+{
+  "session_id": "abc123",
+  "cwd": "/Users/pray/work/js/pray-bot",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Skill",
+  "tool_input": {
+    "skill_name": "/spec",
+    "skill_args": "docs/abc.md"
+  },
+  "tool_use_id": "toolu_01ABC..."
+}
+```
+
+> `skill_name`은 `/` 접두사 포함 (e.g. `/spec`). skillName DB 저장 시 접두사 제거 → `spec`.
+> `trigger_command` = `skill_name + " " + skill_args` (e.g. `/spec docs/abc.md`).
+
+**SessionStart:**
+
+```json
+{
+  "session_id": "abc123",
+  "hook_event_name": "SessionStart",
+  "source": "startup|resume|clear|compact",
+  "model": "claude-sonnet-4-6"
+}
+```
+
+**Stop (매 턴 완료):**
+
+```json
+{
+  "session_id": "abc123",
+  "transcript_path": "/path/to/transcript.jsonl",
+  "hook_event_name": "Stop",
+  "stop_hook_active": false
+}
+```
+
+> `stop_hook_active: true`이면 Stop 훅이 이미 한 번 실행된 상태 → 무한루프 방지용 플래그.
+
+**UserPromptSubmit:**
+
+```json
+{
+  "session_id": "abc123",
+  "cwd": "...",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "유저가 입력한 프롬프트"
+}
+```
+
+**Notification:**
+
+```json
+{
+  "session_id": "abc123",
+  "hook_event_name": "Notification",
+  "notification_type": "permission_prompt|idle_prompt|elicitation_dialog|auth_success"
+}
+```
+
+### 6.3 lifecycle-logger.sh
+
+`EVENT_TYPE` / `PHASE`는 훅 command prefix에서 환경변수로 주입.
+실제 세션 컨텍스트(`session_id`, `cwd`, `tool_input` 등)는 stdin JSON에서 파싱.
 
 ```bash
 #!/usr/bin/env bash
-# 환경변수로 이벤트 정보 수신 (Claude Code 훅 표준)
 STREAM_FILE="${KW_CHAT_STREAM_PATH:-$HOME/.kw-chat/streams/lifecycle.jsonl}"
 mkdir -p "$(dirname "$STREAM_FILE")"
 
-ID=$(python3 -c "import uuid; print(str(uuid.uuid4()))")
-NOW=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+STDIN_DATA=$(cat)  # stdin JSON 한 번만 읽기
 
-echo "{\"id\":\"$ID\",\"eventType\":\"$EVENT_TYPE\",\"phase\":\"$PHASE\",\"occurredAtIso\":\"$NOW\",\"sessionId\":\"${CLAUDE_SESSION_ID:-unknown}\",\"provider\":\"claude\",\"projectPath\":\"${CLAUDE_PROJECT_PATH:-null}\"}" >> "$STREAM_FILE"
+LINE=$(EVENT_TYPE="$EVENT_TYPE" PHASE="$PHASE" python3 -c "
+import sys, json, uuid, os
+from datetime import datetime, timezone
+
+data = json.loads(sys.stdin.read() or '{}')
+event_type = os.environ['EVENT_TYPE']
+phase       = os.environ.get('PHASE', '')
+session_id  = data.get('session_id', 'unknown')
+project_path = data.get('cwd') or None
+
+if event_type == 'skill.lifecycle':
+    tool_input   = data.get('tool_input', {})
+    raw_name     = tool_input.get('skill_name') or None   # e.g. '/spec'
+    skill_args   = tool_input.get('skill_args') or None   # e.g. 'docs/abc.md'
+    skill_name   = raw_name.lstrip('/') if raw_name else None  # 'spec'
+    trigger_cmd  = (raw_name + (' ' + skill_args if skill_args else '')) if raw_name else None
+    event = { 'skillName': skill_name, 'triggerCommand': trigger_cmd, ... }
+...
+print(json.dumps(event))
+" <<< "$STDIN_DATA")
+
+[ -n "$LINE" ] && echo "$LINE" >> "$STREAM_FILE"
 ```
 
-> **참고**: Claude Code 훅은 `CLAUDE_SESSION_ID`, `CLAUDE_PROJECT_PATH` 등 환경변수로 컨텍스트를 전달함. 실제 변수명은 Claude Code 훅 문서에서 확인 필요.
+> 전체 구현: `src/lifecycle-stream/lifecycle-logger.sh`
 
-### 6.3 install-hooks.ts
+### 6.4 install-hooks.ts
 
 실행: `bun run src/lifecycle-stream/install-hooks.ts`
 
@@ -125,27 +237,21 @@ echo "{\"id\":\"$ID\",\"eventType\":\"$EVENT_TYPE\",\"phase\":\"$PHASE\",\"occur
 1. `lifecycle-logger.sh`를 `~/.claude/hooks/lifecycle-logger.sh`로 **symlink** 생성 (이미 있으면 skip)
 2. `chmod +x` 확인
 3. `~/.claude/settings.json` 읽기
-4. 아래 4개 훅 항목을 **기존 설정에 merge** (중복 방지: command 문자열로 존재 여부 확인 후 없을 때만 추가)
-5. `~/.claude/settings.json` 저장
+4. 아래 훅 항목을 **기존 설정에 merge** (중복 방지: command 문자열로 존재 여부 확인 후 없을 때만 추가)
+5. 구 v1 lifecycle-logger 그룹 자동 제거 후 v2 등록 (migration)
+6. `~/.claude/settings.json` 저장
 
-merge할 훅 항목:
+merge할 훅 항목 (v2):
 
 ```json
 {
-  "SessionStart": [{
-    "hooks": [{ "type": "command", "command": "EVENT_TYPE=session.lifecycle PHASE=started ~/.claude/hooks/lifecycle-logger.sh" }]
-  }],
-  "Stop": [{
-    "hooks": [{ "type": "command", "command": "EVENT_TYPE=session.lifecycle PHASE=ended ~/.claude/hooks/lifecycle-logger.sh" }]
-  }],
-  "PreToolUse": [{
-    "matcher": "Skill",
-    "hooks": [{ "type": "command", "command": "EVENT_TYPE=skill.lifecycle PHASE=in_progress ~/.claude/hooks/lifecycle-logger.sh" }]
-  }],
-  "PostToolUse": [{
-    "matcher": "Skill",
-    "hooks": [{ "type": "command", "command": "EVENT_TYPE=skill.lifecycle PHASE=completed ~/.claude/hooks/lifecycle-logger.sh" }]
-  }]
+  "SessionStart":      [{ "hooks": [{ "type": "command", "command": "EVENT_TYPE=session.lifecycle PHASE=started ~/.claude/hooks/lifecycle-logger.sh" }] }],
+  "SessionEnd":        [{ "hooks": [{ "type": "command", "command": "EVENT_TYPE=session.lifecycle PHASE=ended ~/.claude/hooks/lifecycle-logger.sh" }] }],
+  "Stop":              [{ "hooks": [{ "type": "command", "command": "EVENT_TYPE=turn.end ~/.claude/hooks/lifecycle-logger.sh" }] }],
+  "UserPromptSubmit":  [{ "hooks": [{ "type": "command", "command": "EVENT_TYPE=turn.start ~/.claude/hooks/lifecycle-logger.sh" }] }],
+  "Notification":      [{ "hooks": [{ "type": "command", "command": "EVENT_TYPE=session.activity ~/.claude/hooks/lifecycle-logger.sh" }] }],
+  "PreToolUse":        [{ "matcher": "Skill", "hooks": [{ "type": "command", "command": "EVENT_TYPE=skill.lifecycle PHASE=in_progress ~/.claude/hooks/lifecycle-logger.sh" }] }],
+  "PostToolUse":       [{ "matcher": "Skill", "hooks": [{ "type": "command", "command": "EVENT_TYPE=skill.lifecycle PHASE=completed ~/.claude/hooks/lifecycle-logger.sh" }] }]
 }
 ```
 
@@ -155,7 +261,10 @@ merge할 훅 항목:
 ✓ symlink: ~/.claude/hooks/lifecycle-logger.sh → {pray-bot}/src/lifecycle-stream/lifecycle-logger.sh
 ✓ hooks merged into ~/.claude/settings.json
   - SessionStart: lifecycle-logger
-  - Stop: lifecycle-logger
+  - SessionEnd: lifecycle-logger
+  - Stop: lifecycle-logger (turn.end)
+  - UserPromptSubmit: lifecycle-logger (turn.start)
+  - Notification: lifecycle-logger (session.activity)
   - PreToolUse[Skill]: lifecycle-logger
   - PostToolUse[Skill]: lifecycle-logger
 
