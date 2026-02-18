@@ -1,0 +1,30 @@
+name: Yuna Comment Validate & Fix
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  handle:
+    if: >-
+      github.event.issue.pull_request != null &&
+      github.actor != 'github-actions[bot]'
+    runs-on: [self-hosted]
+    steps:
+      - name: Checkout (default)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Handle /yuna command
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ vars.YUNA_OPENAI_MODEL || 'gpt-4.1-mini' }}
+          YUNA_ALLOWED_USER: ${{ vars.YUNA_ALLOWED_USER || 'pohangjungi' }}
+        run: node scripts/yuna/comment-eval-fix.mjs
