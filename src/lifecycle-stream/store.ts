@@ -40,12 +40,6 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_skill_events_session_time
     ON skill_lifecycle_events (session_id, occurred_at_iso DESC);
 
-  CREATE TABLE IF NOT EXISTS lifecycle_stream_offsets (
-    stream_key TEXT PRIMARY KEY,
-    inode TEXT NOT NULL,
-    byte_offset INTEGER NOT NULL,
-    updated_at_iso TEXT NOT NULL
-  );
 `;
 
 // ── LifecycleStore ─────────────────────────────────────────────────────────
@@ -107,36 +101,6 @@ export class LifecycleStore {
       $rawJson: JSON.stringify(event),
     });
     return result.changes > 0;
-  }
-
-  // ── Offset tracking ────────────────────────────────────────────────────
-
-  getOffset(streamKey: string): { inode: string; byteOffset: number } | null {
-    const stmt = this.db.prepare(`
-      SELECT inode, byte_offset FROM lifecycle_stream_offsets WHERE stream_key = $streamKey
-    `);
-    const row = stmt.get({ $streamKey: streamKey }) as
-      | { inode: string; byte_offset: number }
-      | null;
-    if (!row) return null;
-    return { inode: row.inode, byteOffset: row.byte_offset };
-  }
-
-  setOffset(streamKey: string, inode: string, byteOffset: number): void {
-    const stmt = this.db.prepare(`
-      INSERT INTO lifecycle_stream_offsets (stream_key, inode, byte_offset, updated_at_iso)
-      VALUES ($streamKey, $inode, $byteOffset, $updatedAtIso)
-      ON CONFLICT(stream_key) DO UPDATE SET
-        inode = excluded.inode,
-        byte_offset = excluded.byte_offset,
-        updated_at_iso = excluded.updated_at_iso
-    `);
-    stmt.run({
-      $streamKey: streamKey,
-      $inode: inode,
-      $byteOffset: byteOffset,
-      $updatedAtIso: new Date().toISOString(),
-    });
   }
 
   close(): void {
