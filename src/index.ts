@@ -16,6 +16,7 @@ export * from './presence/index.ts';
 export * from './cron/index.ts';
 export * from './session-monitor/index.ts';
 export * from './codex-server/index.ts';
+export * from './approval-core/index.ts';
 export * from './discord/index.ts';
 export * from './auto-thread/index.ts';
 export * from './server/util.ts';
