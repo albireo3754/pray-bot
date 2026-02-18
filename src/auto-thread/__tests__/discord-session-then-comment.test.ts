@@ -67,14 +67,15 @@ type DiscordThreadRoute = {
 };
 
 function makeConfig(overrides: Partial<AutoThreadConfig> = {}): AutoThreadConfig {
+  const id = Math.random().toString(36).slice(2);
   return {
     enabled: true,
     targetStates: ['active', 'idle'],
     fallbackChannelId: 'ch-fallback',
-    storePaths: ['/tmp/auto-threads-test.json'],
+    storePaths: [`/tmp/auto-threads-test-${id}.json`],
     monitorLogEnabled: false,
     monitorIntervalMs: 0,
-    monitorStatePath: '/tmp/auto-thread-state-test.json',
+    monitorStatePath: `/tmp/auto-thread-state-test-${id}.json`,
     excludedProjectPathPrefixes: [],
     sendInitialEmbed: false,
     archiveOnComplete: false,
@@ -149,66 +150,38 @@ describe('AutoThreadDiscovery - discord session then comment scenario', () => {
     await discovery.init();
   });
 
-  test('bug: SessionStart hook fires before providerSessionId is set → duplicate auto-thread', async () => {
+  test('fix: SessionStart hook with providerSessionId="" is claimed by cwd → no auto-thread', async () => {
     const SESSION_ID = 'sess-aaa';
+    const CWD = '/Users/pray/work/js/pray-bot';
 
-    // Step 1: Discord /claude 명령으로 thread 생성
-    // providerSessionId = '' (Claude가 아직 session ID 미반환)
+    // Step 1: /claude 명령으로 discord thread 생성.
+    // Claude stdout 파싱 전이므로 providerSessionId='' 상태.
     const discordRoute: DiscordThreadRoute = {
       threadId: 'discord-thread-001',
       parentChannelId: 'ch-parent',
       mappingKey: 'pray-bot',
       provider: 'claude',
-      providerSessionId: '',      // ← 핵심: 아직 빈 문자열
-      cwd: '/Users/pray/work/js/pray-bot',
+      providerSessionId: '',   // ← stdout 파싱 전, 아직 빈 문자열
+      cwd: CWD,
       createdAt: Date.now(),
       updatedAt: Date.now(),
       autoDiscovered: false,
     };
     threadRoutes.set('discord-thread-001', discordRoute);
 
-    // Step 2: Claude 시작 직후 SessionStart hook 수신
-    // providerSessionId가 아직 ''이므로 isAlreadyMapped가 매칭 실패 → auto-thread 생성
-    const snapshot = makeSnapshot({ sessionId: SESSION_ID });
-    await discovery.onSessionStart(snapshot);
-
-    // 이 시점에 auto-thread가 생성되었어야 함 (버그 재현)
-    expect(discordClient.createThread).toHaveBeenCalledTimes(1);
-
-    // Step 3: Claude가 session ID 반환 → providerSessionId 설정
-    discordRoute.providerSessionId = SESSION_ID;
-
-    // Step 4: 사용자 댓글 → resume으로 Claude 재시작 → SessionStart hook 다시
-    await discovery.onSessionStart(snapshot);
-
-    // providerSessionId가 이미 설정되어 있으므로 추가 thread 생성 없어야 함
-    expect(discordClient.createThread).toHaveBeenCalledTimes(1); // 여전히 1개여야 함
-  });
-
-  test('after fix: SessionStart hook should not create auto-thread when discord route exists with matching cwd', async () => {
-    const SESSION_ID = 'sess-bbb';
-    const CWD = '/Users/pray/work/js/pray-bot';
-
-    // Discord route 등록 (providerSessionId 비어있음)
-    const discordRoute: DiscordThreadRoute = {
-      threadId: 'discord-thread-002',
-      parentChannelId: 'ch-parent',
-      mappingKey: 'pray-bot',
-      provider: 'claude',
-      providerSessionId: '',
-      cwd: CWD,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      autoDiscovered: false,
-    };
-    threadRoutes.set('discord-thread-002', discordRoute);
-
-    // SessionStart hook - providerSessionId가 비어있어도 같은 cwd의 non-auto route가 있으면 막아야 함
+    // Step 2: Claude 시작 직후 SessionStart hook 수신.
+    // claimRouteBySessionId가 cwd 매칭으로 discordRoute.providerSessionId를 선점 등록.
+    // → isAlreadyMapped = true → auto-thread 생성 안 함.
     const snapshot = makeSnapshot({ sessionId: SESSION_ID, projectPath: CWD });
     await discovery.onSessionStart(snapshot);
 
-    // 기대: cwd 매칭으로 중복 생성 방지 (현재 버그: createThread가 1번 호출됨)
-    // 이 테스트는 버그가 수정된 후에 통과해야 함
+    expect(discordClient.createThread).toHaveBeenCalledTimes(0);
+    // claimRouteBySessionId가 route에 session_id를 선점 등록했는지 확인
+    expect(discordRoute.providerSessionId).toBe(SESSION_ID);
+
+    // Step 3: 사용자 댓글 → resume → SessionStart hook 재수신.
+    // 이미 providerSessionId가 설정되어 있으므로 여전히 막힌다.
+    await discovery.onSessionStart(snapshot);
     expect(discordClient.createThread).toHaveBeenCalledTimes(0);
   });
 
