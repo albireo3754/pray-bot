@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, mkdir, rm, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { CodexUsageMonitor } from '../codex-monitor.ts';
+import { CodexSessionMonitor } from '../codex-monitor.ts';
 
 const tempRoots: string[] = [];
 
@@ -41,7 +41,7 @@ async function writeCodexSessionFile(
   return filePath;
 }
 
-describe('CodexUsageMonitor', () => {
+describe('CodexSessionMonitor', () => {
   test('parses codex JSONL into snapshot fields', async () => {
     const root = await createTempRoot();
     const now = new Date();
@@ -119,7 +119,7 @@ describe('CodexUsageMonitor', () => {
       mtimeMs,
     );
 
-    const monitor = new CodexUsageMonitor({
+    const monitor = new CodexSessionMonitor({
       sessionsRoot: root,
       scanDays: 1,
       pollIntervalMs: 60_000,
@@ -165,7 +165,7 @@ describe('CodexUsageMonitor', () => {
     await writeCodexSessionFile(root, now, 'completed-session', makeLines('completed-session'), now.getTime() - 2 * 60 * 60_000);
     await writeCodexSessionFile(root, now, 'stale-session', makeLines('stale-session'), now.getTime() - 26 * 60 * 60_000);
 
-    const monitor = new CodexUsageMonitor({
+    const monitor = new CodexSessionMonitor({
       sessionsRoot: root,
       scanDays: 1,
       pollIntervalMs: 60_000,

@@ -92,7 +92,7 @@ mock.module('../claude-parser', () => ({
   },
 }));
 
-const { ClaudeUsageMonitor } = await import('../claude-monitor');
+const { ClaudeSessionMonitor } = await import('../claude-monitor');
 
 function buildPath(projectKey: string, fileName: string): string {
   return `/mock-home/projects/${projectKey}/${fileName}`;
@@ -105,7 +105,7 @@ beforeEach(() => {
   tailCallCount = 0;
 });
 
-describe('ClaudeUsageMonitor.refresh', () => {
+describe('ClaudeSessionMonitor.refresh', () => {
   test('builds active session snapshot from process + jsonl metadata', async () => {
     const now = Date.now();
     const projectKey = '-Users-user-work-js-my-project';
@@ -151,7 +151,7 @@ describe('ClaudeUsageMonitor.refresh', () => {
       lastAssistantStopReason: null,
     });
 
-    const monitor = new ClaudeUsageMonitor();
+    const monitor = new ClaudeSessionMonitor();
     await monitor.refresh();
 
     const status = monitor.getStatus();
@@ -180,7 +180,7 @@ describe('ClaudeUsageMonitor.refresh', () => {
       },
     ];
 
-    const monitor = new ClaudeUsageMonitor();
+    const monitor = new ClaudeSessionMonitor();
     await monitor.refresh();
 
     const status = monitor.getStatus();
@@ -233,7 +233,7 @@ describe('ClaudeUsageMonitor.refresh', () => {
       lastAssistantStopReason: null,
     });
 
-    const monitor = new ClaudeUsageMonitor();
+    const monitor = new ClaudeSessionMonitor();
     await monitor.refresh();
     await monitor.refresh();
 

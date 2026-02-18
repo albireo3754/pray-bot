@@ -3,7 +3,7 @@ import type { PrayBotPlugin, PluginContext, RouteDefinition, CronActionDefinitio
 import type { CommandDefinition } from './command/registry.ts';
 import { CommandRegistry } from './command/registry.ts';
 import { AgentSessionManager } from './agents/manager.ts';
-import { createHookRoute, type HookAcceptingMonitor } from './usage-monitor/hook-receiver.ts';
+import { createHookRoute, type HookAcceptingMonitor } from './session-monitor/hook-receiver.ts';
 import type { AutoThreadDiscovery } from './auto-thread/index.ts';
 import type { Server } from 'bun';
 

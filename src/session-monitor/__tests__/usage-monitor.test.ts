@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { SessionSnapshot, MonitorStatus, TokenUsageReport } from '../types.ts';
 import type { SessionMonitorProvider } from '../index.ts';
-import { UsageMonitor } from '../index.ts';
+import { SessionMonitor } from '../index.ts';
 
 function makeSnapshot(overrides: Partial<SessionSnapshot>): SessionSnapshot {
   return {
@@ -86,12 +86,12 @@ class MockProvider implements SessionMonitorProvider {
   }
 }
 
-describe('UsageMonitor', () => {
+describe('SessionMonitor', () => {
   test('merges sessions from two providers', async () => {
     const claude = new MockProvider('claude');
     const codex = new MockProvider('codex');
 
-    const monitor = new UsageMonitor();
+    const monitor = new SessionMonitor();
     monitor.addProvider('claude', claude);
     monitor.addProvider('codex', codex);
     await monitor.init();
@@ -117,7 +117,7 @@ describe('UsageMonitor', () => {
     const claude = new MockProvider('claude');
     const codex = new MockProvider('codex');
 
-    const monitor = new UsageMonitor();
+    const monitor = new SessionMonitor();
     monitor.addProvider('claude', claude);
     monitor.addProvider('codex', codex);
     await monitor.init();
@@ -142,7 +142,7 @@ describe('UsageMonitor', () => {
     const claude = new MockProvider('claude');
     const codex = new MockProvider('codex');
 
-    const monitor = new UsageMonitor();
+    const monitor = new SessionMonitor();
     monitor.addProvider('claude', claude);
     monitor.addProvider('codex', codex);
     await monitor.init();
@@ -175,7 +175,7 @@ describe('UsageMonitor', () => {
     const claude = new MockProvider('claude');
     const codex = new MockProvider('codex');
 
-    const monitor = new UsageMonitor();
+    const monitor = new SessionMonitor();
     monitor.addProvider('claude', claude);
     monitor.addProvider('codex', codex);
     await monitor.init();
@@ -196,7 +196,7 @@ describe('UsageMonitor', () => {
   test('filters out stale sessions from getAll', async () => {
     const claude = new MockProvider('claude');
 
-    const monitor = new UsageMonitor();
+    const monitor = new SessionMonitor();
     monitor.addProvider('claude', claude);
     await monitor.init();
 

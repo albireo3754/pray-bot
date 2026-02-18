@@ -1,5 +1,5 @@
-import type { SessionSnapshot, ActivityPhase } from '../usage-monitor/types.ts';
-import type { SessionMonitorProvider } from '../usage-monitor/index.ts';
+import type { SessionSnapshot, ActivityPhase } from '../session-monitor/types.ts';
+import type { SessionMonitorProvider } from '../session-monitor/index.ts';
 import type { ChannelRegistry } from '../discord/channel-registry.ts';
 import type { DiscordClient } from '../discord/client.ts';
 import type { ChannelMapping } from '../discord/types.ts';

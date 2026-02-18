@@ -21,7 +21,7 @@ function estimateCost(tokens: { input: number; output: number; cached: number })
   );
 }
 
-export class ClaudeUsageMonitor implements SessionMonitorProvider, HookAcceptingMonitor {
+export class ClaudeSessionMonitor implements SessionMonitorProvider, HookAcceptingMonitor {
   private sessions = new Map<string, SessionSnapshot>();
   private timer: Timer | null = null;
   private watchDebounceTimer: Timer | null = null;

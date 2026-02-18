@@ -25,7 +25,7 @@ type CodexEntry = {
   payload?: JsonObject;
 };
 
-export interface CodexUsageMonitorOptions {
+export interface CodexSessionMonitorOptions {
   pollIntervalMs?: number;
   scanDays?: number;
   sessionsRoot?: string;
@@ -254,7 +254,7 @@ function estimateCost(tokens: { input: number; output: number; cached: number })
   );
 }
 
-export class CodexUsageMonitor implements SessionMonitorProvider {
+export class CodexSessionMonitor implements SessionMonitorProvider {
   private sessions = new Map<string, SessionSnapshot>();
   private timer: Timer | null = null;
   private lastRefresh = new Date();
@@ -263,7 +263,7 @@ export class CodexUsageMonitor implements SessionMonitorProvider {
   private readonly scanDays: number;
   private readonly sessionsRoot: string;
 
-  constructor(options: CodexUsageMonitorOptions = {}) {
+  constructor(options: CodexSessionMonitorOptions = {}) {
     this.pollIntervalMs = options.pollIntervalMs ?? 15_000;
     this.scanDays = Math.max(1, options.scanDays ?? DEFAULT_SCAN_DAYS);
     this.sessionsRoot = options.sessionsRoot ?? DEFAULT_SESSIONS_ROOT;

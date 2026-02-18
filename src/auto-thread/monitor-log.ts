@@ -1,4 +1,4 @@
-import type { SessionSnapshot } from '../usage-monitor/types.ts';
+import type { SessionSnapshot } from '../session-monitor/types.ts';
 
 const DEFAULT_PREVIEW_LIMIT = 220;
 
