@@ -149,6 +149,8 @@ export interface SessionOptions {
   maxTurns?: number;
   maxBudgetUsd?: number;
   provider?: ProviderId;
+  /** Extra environment variables injected into the spawned process. */
+  env?: Record<string, string>;
 }
 
 // -- Provider --

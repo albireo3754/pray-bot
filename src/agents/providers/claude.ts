@@ -374,6 +374,7 @@ export class ClaudeSession implements AgentSession {
         stderr: 'pipe',
         env: {
           ...process.env,
+          ...this.options.env,
         },
       });
 
