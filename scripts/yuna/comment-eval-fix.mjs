@@ -1,4 +1,5 @@
-import { execSync } from 'node:child_process';
+import { execSync, spawnSync } from 'node:child_process';
+import { writeFileSync, unlinkSync } from 'node:fs';
 import { event, fetchAllPrFiles, gh, openaiJson, postIssueComment, repo } from './common.mjs';
 
 const marker = '<!-- yuna-comment-handler -->';
@@ -74,8 +75,12 @@ async function run() {
     try {
       for (const [idx, p] of patchBlocks.entries()) {
         const patchFile = `.yuna-patch-${idx}.diff`;
-        execSync(`cat > ${patchFile} <<'PATCH'\n${p.patch}\nPATCH`);
-        execSync(`git apply --index --whitespace=fix ${patchFile}`);
+        writeFileSync(patchFile, p.patch);
+        try {
+          execSync(`git apply --index --whitespace=fix ${patchFile}`);
+        } finally {
+          unlinkSync(patchFile);
+        }
       }
 
       const changed = execSync('git diff --cached --name-only', { encoding: 'utf8' }).trim();
@@ -88,7 +93,7 @@ async function run() {
 
         // push to PR head branch (same-repo PR expected)
         const headRef = pr.head?.ref;
-        execSync(`git push origin HEAD:${headRef}`);
+        spawnSync('git', ['push', 'origin', `HEAD:${headRef}`], { stdio: 'inherit' });
         lines.push(`- 수정 반영: \`${changed.replace(/\n/g, ', ')}\``);
       }
     } catch (err) {

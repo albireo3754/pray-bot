@@ -1,4 +1,4 @@
-import { event, fetchAllPrFiles, gh, openaiJson, postIssueComment } from './common.mjs';
+import { event, fetchAllPrFiles, gh, openaiJson, postIssueComment, repo } from './common.mjs';
 
 const marker = '<!-- yuna-pr-review -->';
 
@@ -63,15 +63,6 @@ async function run() {
   lines.push('\n명령어: `/yuna validate ...` 또는 `/yuna fix ...` 로 후속 검토/수정 요청 가능');
 
   await postIssueComment(prNumber, lines.join('\n'));
-
-  // Optional: leave review state (comment event only to stay safe)
-  await gh(`/repos/${process.env.GITHUB_REPOSITORY}/pulls/${prNumber}/reviews`, {
-    method: 'POST',
-    body: JSON.stringify({
-      event: 'COMMENT',
-      body: `${marker}\n자동 리뷰 코멘트를 남겼습니다.`,
-    }),
-  });
 }
 
 run().catch(async (err) => {
