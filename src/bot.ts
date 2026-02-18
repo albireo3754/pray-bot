@@ -6,6 +6,8 @@ import { AgentSessionManager } from './agents/manager.ts';
 import { createHookRoute, type HookAcceptingMonitor } from './session-monitor/hook-receiver.ts';
 import { ensureHooksRegistered } from './hooks/claude-settings.ts';
 import type { AutoThreadDiscovery } from './auto-thread/index.ts';
+import { LifecycleStore } from './lifecycle-stream/store.ts';
+import { FileStreamConsumer } from './lifecycle-stream/file-stream-consumer.ts';
 import type { Server } from 'bun';
 
 type WebSocketData = Record<string, unknown>;
@@ -21,6 +23,14 @@ export interface PrayBotConfig {
   authToken?: string;
   /** Discord bot token (null = no Discord) */
   discordToken?: string | null;
+  /** Enable lifecycle stream consumer auto-start (default: true) */
+  lifecycleConsumerEnabled?: boolean;
+  /** Optional lifecycle SQLite DB path override */
+  lifecycleDbPath?: string;
+  /** Optional lifecycle JSONL stream path override */
+  lifecycleStreamPath?: string;
+  /** Optional lifecycle consumer poll interval override (ms) */
+  lifecyclePollIntervalMs?: number;
   /** Additional config passed to plugins */
   [key: string]: unknown;
 }
@@ -32,6 +42,8 @@ export class PrayBot {
   private routes: RouteDefinition[] = [];
   private cronActions: CronActionDefinition[] = [];
   private server: Server<WebSocketData> | null = null;
+  private lifecycleStore: LifecycleStore | null = null;
+  private lifecycleConsumer: FileStreamConsumer | null = null;
   private config: PrayBotConfig;
 
   constructor(config: PrayBotConfig = {}) {
@@ -82,6 +94,20 @@ export class PrayBot {
     // Initialize all plugins
     await this.pluginManager.startAll(ctx);
 
+    // Start lifecycle stream consumer (best-effort)
+    if (this.config.lifecycleConsumerEnabled !== false) {
+      try {
+        this.lifecycleStore = new LifecycleStore(this.config.lifecycleDbPath);
+        this.lifecycleConsumer = new FileStreamConsumer(this.lifecycleStore, {
+          streamPath: this.config.lifecycleStreamPath,
+          pollIntervalMs: this.config.lifecyclePollIntervalMs,
+        });
+        this.lifecycleConsumer.start();
+      } catch (err) {
+        console.warn('[PrayBot] Lifecycle consumer startup skipped:', err);
+      }
+    }
+
     // Start HTTP server (unless disabled)
     if (this.config.startServer !== false) {
       this.server = Bun.serve({
@@ -94,6 +120,14 @@ export class PrayBot {
 
   /** Stop the bot gracefully */
   async stop(): Promise<void> {
+    if (this.lifecycleConsumer) {
+      this.lifecycleConsumer.stop();
+      this.lifecycleConsumer = null;
+    }
+    if (this.lifecycleStore) {
+      this.lifecycleStore.close();
+      this.lifecycleStore = null;
+    }
     await this.pluginManager.stopAll();
     if (this.server) {
       this.server.stop();
