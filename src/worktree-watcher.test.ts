@@ -20,6 +20,20 @@ class FakeRegistry {
     this.mappings.set(key, { key, path, category });
   }
 
+  removeMapping(key: string): boolean {
+    return this.mappings.delete(key);
+  }
+
+  getCategories(): Map<string, ChannelMapping[]> {
+    const result = new Map<string, ChannelMapping[]>();
+    for (const m of this.mappings.values()) {
+      const list = result.get(m.category) ?? [];
+      list.push(m);
+      result.set(m.category, list);
+    }
+    return result;
+  }
+
   seedMapping(mapping: ChannelMapping): void {
     this.mappings.set(mapping.key, mapping);
   }

@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, watch, type FSWatcher } from 'node:fs';
 import { join } from 'node:path';
 
-import { saveChannelMapping } from './config.ts';
+import { removeChannelMapping, saveChannelMapping } from './config.ts';
 import type { ChannelRegistry } from './discord/channel-registry.ts';
 import type { DiscordClient } from './discord/client.ts';
 
@@ -139,6 +139,46 @@ export class WorktreeWatcher {
         categories: [this.categoryName],
       });
     }
+
+    await this.cleanupStaleWorktrees();
+  }
+
+  async cleanupStaleWorktrees(): Promise<string[]> {
+    const categories = this.registry.getCategories();
+    const worktreeMappings = categories.get(this.categoryName);
+    if (!worktreeMappings) return [];
+
+    const removed: string[] = [];
+
+    for (const mapping of worktreeMappings) {
+      if (existsSync(mapping.path)) continue;
+
+      // Path no longer exists on disk — clean up
+      if (mapping.channelId) {
+        try {
+          await this.discordClient.deleteChannel(mapping.channelId);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn(`[WorktreeWatcher] Failed to delete channel #${mapping.key}: ${msg}`);
+        }
+      }
+
+      this.registry.removeMapping(mapping.key);
+      try {
+        removeChannelMapping(mapping.key);
+      } catch {
+        // best-effort persistence
+      }
+      this.knownWorktrees.delete(mapping.key);
+
+      removed.push(mapping.key);
+    }
+
+    if (removed.length > 0) {
+      console.log(`[WorktreeWatcher] Cleaned up ${removed.length} stale worktrees: ${removed.join(', ')}`);
+    }
+
+    return removed;
   }
 
   private toChannelKey(rawName: string): string {
